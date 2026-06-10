@@ -56,6 +56,11 @@ export type OcrExtractionState = 'not_requested' | 'uploading' | 'extracting' | 
 export type ScreenAnalysisState = 'not_requested' | 'analyzing' | 'completed' | 'failed';
 
 export type CommandResultMetadata = {
+  analysisSource?: 'local_agent' | 'remote_backend';
+  localAgentState?: LocalAgentConnectionState;
+  localAgentProvider?: string | null;
+  localAgentModel?: string | null;
+  localAgentModelRole?: string | null;
   screenSize?: string;
   manifestTargetFileCount?: number;
   manifestExcludedFileCount?: number;
@@ -95,7 +100,7 @@ export type CommandResult = {
 export type ContextStatusTone = 'ready' | 'idle' | 'warning' | 'active';
 
 export type ContextStatusItem = {
-  key: 'screen' | 'project' | 'voice' | 'rag';
+  key: 'screen' | 'project' | 'voice' | 'rag' | 'localAgent';
   label: string;
   value: string;
   tone: ContextStatusTone;
@@ -135,6 +140,48 @@ export type ScreenContextSnapshot = {
   analysisState: ScreenAnalysisState;
   analysisProvider: string | null;
   analysisErrorMessage: string | null;
+};
+
+
+export type LocalAgentConnectionState = 'checking' | 'ready' | 'unavailable' | 'error';
+
+export type LocalAgentHealthSnapshot = {
+  state: LocalAgentConnectionState;
+  provider: string | null;
+  model: string | null;
+  baseUrl: string | null;
+  modelRouting: Record<string, string | null>;
+  warning: string | null;
+  checkedAt: string | null;
+  errorMessage: string | null;
+};
+
+export type LocalAgentHealthResponse = {
+  available: boolean;
+  provider: string;
+  model: string | null;
+  baseUrl: string;
+  modelRouting: Record<string, string | null>;
+  warning: string | null;
+};
+
+export type LocalLlmAnalyzeRequest = {
+  commandId?: string;
+  intent: CommandIntent;
+  text: string;
+  context?: string | null;
+};
+
+export type LocalLlmAnalyzeResponse = {
+  status: 'completed' | 'failed';
+  provider: string;
+  model: string | null;
+  modelRole: string | null;
+  intent: CommandIntent;
+  summary: string;
+  detail: string | null;
+  actionItems: string[];
+  warnings: string[];
 };
 
 export type ScreenOcrRequest = {
