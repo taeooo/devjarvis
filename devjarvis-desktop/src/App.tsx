@@ -9,11 +9,12 @@ import { JarvisCore } from './components/JarvisCore';
 import { VoiceStatusPanel } from './components/VoiceStatusPanel';
 import { createProject, registerProjectManifest } from './api/backendClient';
 import { notifyCommandResult } from './utils/nativeWindow';
+import { createClientId, createCommandInput, createCommandPlan } from './utils/commandRouter';
 import { captureScreenFrame, isScreenCaptureSupported } from './utils/screenCapture';
 import type {
   CommandInput,
+  CommandPipelineStage,
   CommandResult,
-  ContextMode,
   ContextStatusItem,
   ScreenContextSnapshot,
   SystemStatus,
@@ -26,6 +27,12 @@ type SelectedProject = {
   name: string;
 };
 
+type PipelineExecutionSummary = {
+  messages: string[];
+  metadata: NonNullable<CommandResult['metadata']>;
+  stage: CommandPipelineStage;
+};
+
 const MAX_RESULT_HISTORY = 8;
 
 const initialScreenContext: ScreenContextSnapshot = {
@@ -34,6 +41,7 @@ const initialScreenContext: ScreenContextSnapshot = {
   height: null,
   capturedAt: null,
   errorMessage: null,
+  lastIntent: null,
 };
 
 function App() {
@@ -102,7 +110,13 @@ function App() {
       key: 'screen',
       label: 'Screen',
       value: formatScreenContextValue(screenContext),
-      tone: screenContext.state === 'captured' ? 'ready' : screenContext.state === 'capturing' ? 'active' : screenContext.state === 'error' || screenContext.state === 'unavailable' ? 'warning' : 'idle',
+      tone: screenContext.state === 'captured'
+        ? 'ready'
+        : screenContext.state === 'capturing'
+          ? 'active'
+          : screenContext.state === 'error' || screenContext.state === 'unavailable'
+            ? 'warning'
+            : 'idle',
     },
     {
       key: 'project',
@@ -155,19 +169,17 @@ function App() {
   }
 
   async function handleTextCommandSubmit(text: string) {
-    const command: CommandInput = {
-      id: createClientId(),
-      source: 'text',
-      text,
-      createdAt: new Date().toISOString(),
-      contextMode: inferContextMode(text),
-    };
-
+    const command = createCommandInput(text, 'text');
+    const plan = createCommandPlan(command);
     const startedResult: CommandResult = {
       id: createClientId(),
       commandId: command.id,
+      source: command.source,
+      contextMode: command.contextMode,
+      intent: command.intent,
+      pipelineStage: 'received',
       title: 'Command processing',
-      summary: summarizeCommandContext(command.contextMode),
+      summary: plan.pendingSummary,
       status: 'processing',
       createdAt: new Date().toISOString(),
       displayMode: 'notify',
@@ -181,34 +193,18 @@ function App() {
     setVoiceState((current) => (current === 'unavailable' ? current : 'transcribing'));
 
     try {
-      const messages: string[] = [];
-
-      if (command.contextMode === 'screen' || command.contextMode === 'auto') {
-        const snapshot = await refreshScreenContext();
-        messages.push(`Screen captured · ${snapshot.width}×${snapshot.height}`);
-      }
-
-      if (command.contextMode === 'project' || command.contextMode === 'auto') {
-        if (selectedProject) {
-          const summary = await refreshProjectManifest(selectedProject);
-          messages.push(`Project refreshed · ${summary.targetFileCount.toLocaleString()} files`);
-        } else {
-          messages.push('Project context not selected');
-        }
-      }
-
-      if (messages.length === 0) {
-        messages.push('Command received locally');
-      }
-
+      const execution = await executePipeline(plan);
       const completedResult: CommandResult = {
         ...startedResult,
-        title: inferResultTitle(command),
-        summary: messages.join(' · '),
+        title: plan.title,
+        summary: execution.messages.length > 0 ? execution.messages.join(' · ') : plan.readySummary,
         detail: command.text,
+        nextStep: plan.nextStep,
+        metadata: execution.metadata,
         status: 'completed',
+        pipelineStage: execution.stage,
         completedAt: new Date().toISOString(),
-        displayMode: command.contextMode === 'general' ? 'notify' : 'open_app',
+        displayMode: plan.displayMode,
       };
 
       upsertCommandResult(completedResult);
@@ -221,7 +217,9 @@ function App() {
         title: 'Command failed',
         summary: message,
         detail: command.text,
+        nextStep: 'Check permission or command context',
         status: 'failed',
+        pipelineStage: 'failed',
         completedAt: new Date().toISOString(),
         displayMode: 'open_app',
       };
@@ -238,11 +236,60 @@ function App() {
     setVoiceState((current) => (current === 'unavailable' ? current : 'listening'));
   }
 
-  async function refreshScreenContext(): Promise<{ width: number; height: number }> {
+  async function executePipeline(plan: ReturnType<typeof createCommandPlan>): Promise<PipelineExecutionSummary> {
+    const messages: string[] = [];
+    const metadata: NonNullable<CommandResult['metadata']> = {};
+    let stage: CommandPipelineStage = 'completed';
+
+    if (plan.needsScreenCapture) {
+      updateProcessingStage(plan.command.id, 'capturing_screen', 'Capturing selected screen');
+      const snapshot = await refreshScreenContext(plan.command);
+      const screenSize = `${snapshot.width}×${snapshot.height}`;
+      messages.push(`Screen captured · ${screenSize}`);
+      metadata.screenSize = screenSize;
+      stage = 'analysis_ready';
+    }
+
+    if (plan.needsProjectManifest) {
+      updateProcessingStage(plan.command.id, 'refreshing_manifest', 'Refreshing project manifest');
+      if (selectedProject) {
+        const summary = await refreshProjectManifest(selectedProject);
+        messages.push(`Project refreshed · ${summary.targetFileCount.toLocaleString()} files`);
+        metadata.manifestTargetFileCount = summary.targetFileCount;
+        metadata.manifestExcludedFileCount = summary.excludedFileCount;
+        metadata.projectContext = 'selected';
+      } else {
+        messages.push('Project context not selected');
+        metadata.projectContext = 'not_selected';
+      }
+      stage = 'analysis_ready';
+    }
+
+    if (!plan.needsScreenCapture && !plan.needsProjectManifest) {
+      messages.push('Command queued');
+    }
+
+    return {
+      messages,
+      metadata,
+      stage,
+    };
+  }
+
+  function updateProcessingStage(commandId: string, stage: CommandPipelineStage, summary: string) {
+    setCommandResults((current) => current.map((result) => (
+      result.commandId === commandId
+        ? { ...result, pipelineStage: stage, summary }
+        : result
+    )));
+  }
+
+  async function refreshScreenContext(command: CommandInput): Promise<{ width: number; height: number }> {
     setScreenContext((current) => ({
       ...current,
       state: 'capturing',
       errorMessage: null,
+      lastIntent: command.intent,
     }));
 
     try {
@@ -258,6 +305,7 @@ function App() {
         height: captured.height,
         capturedAt: captured.capturedAt,
         errorMessage: null,
+        lastIntent: command.intent,
       });
 
       return snapshot;
@@ -269,6 +317,7 @@ function App() {
         height: null,
         capturedAt: null,
         errorMessage: message,
+        lastIntent: command.intent,
       });
       throw new Error(message);
     }
@@ -327,26 +376,6 @@ function App() {
   );
 }
 
-function inferContextMode(text: string): ContextMode {
-  const normalized = text.toLocaleLowerCase();
-  const screenMatched = /(화면|스크린|캡처|캡쳐|번역|요약|이미지|window|screen)/i.test(normalized);
-  const projectMatched = /(프로젝트|소스|코드|파일|빌드|컴파일|에러|오류|로그|원인|스택트레이스|stack|trace)/i.test(normalized);
-
-  if (screenMatched && projectMatched) {
-    return 'auto';
-  }
-
-  if (screenMatched) {
-    return 'screen';
-  }
-
-  if (projectMatched) {
-    return 'project';
-  }
-
-  return 'general';
-}
-
 function formatScreenContextValue(screenContext: ScreenContextSnapshot): string {
   if (screenContext.state === 'capturing') {
     return 'Capturing';
@@ -367,50 +396,10 @@ function formatScreenContextValue(screenContext: ScreenContextSnapshot): string 
   return 'Ready';
 }
 
-function inferResultTitle(command: CommandInput): string {
-  if (command.contextMode === 'screen') {
-    return 'Screen context ready';
-  }
-
-  if (command.contextMode === 'project') {
-    return 'Project context ready';
-  }
-
-  if (command.contextMode === 'auto') {
-    return 'Context bundle ready';
-  }
-
-  return 'Command received';
-}
-
-function summarizeCommandContext(contextMode: ContextMode): string {
-  if (contextMode === 'screen') {
-    return 'Preparing screen context';
-  }
-
-  if (contextMode === 'project') {
-    return 'Refreshing project manifest';
-  }
-
-  if (contextMode === 'auto') {
-    return 'Preparing screen and project context';
-  }
-
-  return 'Routing command locally';
-}
-
 function extractProjectName(path: string): string {
   const normalized = path.replaceAll('\\', '/').replace(/\/+$/g, '').trim();
   const name = normalized.split('/').pop();
   return name && name.trim().length > 0 ? name : 'Local Project';
-}
-
-function createClientId(): string {
-  if (crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function toErrorMessage(caught: unknown): string {

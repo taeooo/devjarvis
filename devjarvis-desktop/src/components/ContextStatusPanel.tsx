@@ -45,6 +45,10 @@ export function ContextStatusPanel({
           <strong>{formatScreenSnapshot(screenContext)}</strong>
         </div>
         <div className="snapshot-strip">
+          <span>Intent</span>
+          <strong>{formatScreenIntent(screenContext)}</strong>
+        </div>
+        <div className="snapshot-strip">
           <span>Manifest</span>
           <strong>{latestSummary ? `${latestSummary.targetFileCount.toLocaleString()} files` : 'On command'}</strong>
         </div>
@@ -71,4 +75,25 @@ function formatScreenSnapshot(screenContext: ScreenContextSnapshot): string {
   }
 
   return 'On command';
+}
+
+function formatScreenIntent(screenContext: ScreenContextSnapshot): string {
+  if (!screenContext.lastIntent) {
+    return 'Auto';
+  }
+
+  switch (screenContext.lastIntent) {
+    case 'screen_translate':
+      return 'Translate';
+    case 'screen_summary':
+      return 'Summary';
+    case 'screen_error_analysis':
+      return 'Diagnosis';
+    case 'project_diagnosis':
+      return 'Project';
+    case 'log_analysis':
+      return 'Log';
+    case 'general_chat':
+      return 'General';
+  }
 }
