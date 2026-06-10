@@ -7,7 +7,7 @@ import { CommandResultPanel } from './components/CommandResultPanel';
 import { ContextStatusPanel } from './components/ContextStatusPanel';
 import { JarvisCore } from './components/JarvisCore';
 import { VoiceStatusPanel } from './components/VoiceStatusPanel';
-import { createProject, registerProjectManifest } from './api/backendClient';
+import { createProject, extractScreenOcr, registerProjectManifest } from './api/backendClient';
 import { notifyCommandResult } from './utils/nativeWindow';
 import { createClientId, createCommandInput, createCommandPlan } from './utils/commandRouter';
 import { captureScreenFrame, isScreenCaptureSupported } from './utils/screenCapture';
@@ -16,7 +16,9 @@ import type {
   CommandPipelineStage,
   CommandResult,
   ContextStatusItem,
+  ScreenCaptureResult,
   ScreenContextSnapshot,
+  ScreenOcrResponse,
   SystemStatus,
   VoiceState,
 } from './types/jarvisCommand';
@@ -42,6 +44,10 @@ const initialScreenContext: ScreenContextSnapshot = {
   capturedAt: null,
   errorMessage: null,
   lastIntent: null,
+  ocrState: 'not_requested',
+  ocrProvider: null,
+  ocrTextLength: null,
+  ocrErrorMessage: null,
 };
 
 function App() {
@@ -243,10 +249,19 @@ function App() {
 
     if (plan.needsScreenCapture) {
       updateProcessingStage(plan.command.id, 'capturing_screen', 'Capturing selected screen');
-      const snapshot = await refreshScreenContext(plan.command);
-      const screenSize = `${snapshot.width}×${snapshot.height}`;
+      const captured = await refreshScreenContext(plan.command);
+      const screenSize = `${captured.width}×${captured.height}`;
       messages.push(`Screen captured · ${screenSize}`);
       metadata.screenSize = screenSize;
+
+      updateProcessingStage(plan.command.id, 'extracting_ocr', 'Extracting screen text');
+      const ocrResult = await requestScreenOcr(plan.command, captured);
+      messages.push(formatOcrPipelineMessage(ocrResult));
+      metadata.ocrProvider = ocrResult.provider;
+      metadata.ocrStatus = ocrResult.status;
+      metadata.ocrTextFound = ocrResult.textFound;
+      metadata.ocrTextLength = ocrResult.textLength;
+      metadata.ocrPreview = ocrResult.preview;
       stage = 'analysis_ready';
     }
 
@@ -284,7 +299,7 @@ function App() {
     )));
   }
 
-  async function refreshScreenContext(command: CommandInput): Promise<{ width: number; height: number }> {
+  async function refreshScreenContext(command: CommandInput): Promise<ScreenCaptureResult> {
     setScreenContext((current) => ({
       ...current,
       state: 'capturing',
@@ -294,11 +309,6 @@ function App() {
 
     try {
       const captured = await captureScreenFrame();
-      const snapshot = {
-        width: captured.width,
-        height: captured.height,
-      };
-
       setScreenContext({
         state: 'captured',
         width: captured.width,
@@ -306,9 +316,13 @@ function App() {
         capturedAt: captured.capturedAt,
         errorMessage: null,
         lastIntent: command.intent,
+        ocrState: 'not_requested',
+        ocrProvider: null,
+        ocrTextLength: null,
+        ocrErrorMessage: null,
       });
 
-      return snapshot;
+      return captured;
     } catch (caught) {
       const message = toErrorMessage(caught);
       setScreenContext({
@@ -318,7 +332,57 @@ function App() {
         capturedAt: null,
         errorMessage: message,
         lastIntent: command.intent,
+        ocrState: 'not_requested',
+        ocrProvider: null,
+        ocrTextLength: null,
+        ocrErrorMessage: null,
       });
+      throw new Error(message);
+    }
+  }
+
+  async function requestScreenOcr(command: CommandInput, captured: ScreenCaptureResult): Promise<ScreenOcrResponse> {
+    setScreenContext((current) => ({
+      ...current,
+      ocrState: 'extracting',
+      ocrProvider: null,
+      ocrTextLength: null,
+      ocrErrorMessage: null,
+    }));
+
+    try {
+      const response = await extractScreenOcr({
+        commandId: command.id,
+        intent: command.intent,
+        contextMode: command.contextMode,
+        image: {
+          dataUrl: captured.imageDataUrl,
+          mimeType: captured.mimeType,
+          width: captured.width,
+          height: captured.height,
+          byteSize: captured.byteSize,
+          capturedAt: captured.capturedAt,
+        },
+      });
+
+      setScreenContext((current) => ({
+        ...current,
+        ocrState: 'completed',
+        ocrProvider: response.provider,
+        ocrTextLength: response.textLength,
+        ocrErrorMessage: null,
+      }));
+
+      return response;
+    } catch (caught) {
+      const message = toErrorMessage(caught);
+      setScreenContext((current) => ({
+        ...current,
+        ocrState: 'failed',
+        ocrProvider: null,
+        ocrTextLength: null,
+        ocrErrorMessage: message,
+      }));
       throw new Error(message);
     }
   }
@@ -374,6 +438,14 @@ function App() {
       </section>
     </AppShell>
   );
+}
+
+function formatOcrPipelineMessage(result: ScreenOcrResponse): string {
+  if (result.textFound) {
+    return `OCR extracted · ${result.textLength.toLocaleString()} chars`;
+  }
+
+  return `OCR ready · ${result.provider}`;
 }
 
 function formatScreenContextValue(screenContext: ScreenContextSnapshot): string {

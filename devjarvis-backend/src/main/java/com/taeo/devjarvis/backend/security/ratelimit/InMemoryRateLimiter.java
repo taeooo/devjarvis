@@ -1,5 +1,6 @@
 package com.taeo.devjarvis.backend.security.ratelimit;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -16,6 +17,7 @@ public class InMemoryRateLimiter {
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
     private final AtomicLong cleanupCursor = new AtomicLong();
 
+    @Autowired
     public InMemoryRateLimiter(RateLimitProperties properties) {
         this(properties, Clock.systemUTC());
     }

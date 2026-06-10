@@ -79,6 +79,9 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
         if (path.matches("/api/projects/\\d+/files/manifest")) {
             return properties.getManifestRequestsPerMinute();
         }
+        if (path.equals("/api/screen/ocr")) {
+            return properties.getScreenOcrRequestsPerMinute();
+        }
         return properties.getWriteRequestsPerMinute();
     }
 

@@ -33,6 +33,15 @@ export function CommandResultPanel({ results }: CommandResultPanelProps) {
                 <span>{formatContextMode(result.contextMode)}</span>
               </div>
               <p>{result.summary}</p>
+              {result.metadata?.ocrPreview && (
+                <div className="result-ocr-preview">{result.metadata.ocrPreview}</div>
+              )}
+              {result.metadata?.ocrProvider && (
+                <div className="result-meta-row">
+                  <span>OCR {result.metadata.ocrProvider}</span>
+                  <span>{result.metadata.ocrTextFound ? `${result.metadata.ocrTextLength ?? 0} chars` : 'No text'}</span>
+                </div>
+              )}
               {result.nextStep && <small>{result.nextStep}</small>}
             </article>
           ))

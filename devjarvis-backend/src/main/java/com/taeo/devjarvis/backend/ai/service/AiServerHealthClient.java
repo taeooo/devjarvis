@@ -28,8 +28,8 @@ public class AiServerHealthClient {
         long startedAt = System.currentTimeMillis();
         try {
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(normalizeBaseUrl(properties.baseUrl()) + "/internal/health"))
-                    .timeout(Duration.ofMillis(properties.timeoutMillis()))
+                    .uri(URI.create(normalizeBaseUrl(properties.getBaseUrl()) + "/internal/health"))
+                    .timeout(Duration.ofMillis(properties.getTimeoutMillis()))
                     .GET()
                     .build();
 

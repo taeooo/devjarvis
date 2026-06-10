@@ -203,15 +203,15 @@ function resolveReadySummary(contextMode: ContextMode): string {
 
 function resolveNextStep(intent: CommandIntent, contextMode: ContextMode): string {
   if (intent === 'screen_translate') {
-    return 'OCR / vision translation pending';
+    return 'Translation / vision analysis pending';
   }
 
   if (intent === 'screen_summary') {
-    return 'OCR / screen summary pending';
+    return 'Screen summary analysis pending';
   }
 
   if (intent === 'screen_error_analysis') {
-    return contextMode === 'auto' ? 'OCR + project RAG pending' : 'OCR diagnosis pending';
+    return contextMode === 'auto' ? 'Project RAG + diagnosis pending' : 'Screen diagnosis pending';
   }
 
   if (intent === 'project_diagnosis') {
