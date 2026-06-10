@@ -215,6 +215,22 @@ export type ScreenOcrResponse = {
 };
 
 
+
+export type LocalOcrTextBlock = {
+  text: string;
+  confidence?: number | null;
+  x?: number | null;
+  y?: number | null;
+  width?: number | null;
+  height?: number | null;
+};
+
+export type LocalOcrExtractRequest = ScreenOcrRequest;
+
+export type LocalOcrExtractResponse = ScreenOcrResponse & {
+  blocks?: LocalOcrTextBlock[];
+};
+
 export type ScreenAnalysisRequest = {
   commandId: string;
   intent: CommandIntent;

@@ -345,24 +345,17 @@ function App() {
       updateProcessingStage(plan.command.id, 'extracting_ocr', 'Extracting screen text');
       const ocrResult = await requestScreenOcr(plan.command, captured);
       messages.push(formatOcrPipelineMessage(ocrResult));
-      metadata.ocrProvider = ocrResult.provider;
-      metadata.ocrStatus = ocrResult.status;
       metadata.ocrTextFound = ocrResult.textFound;
       metadata.ocrTextLength = ocrResult.textLength;
-      metadata.ocrPreview = ocrResult.preview;
 
       updateProcessingStage(plan.command.id, 'analyzing_screen', 'Analyzing screen text');
       const analysisResult = await requestScreenAnalysis(plan.command, captured, ocrResult);
       messages.push(formatAnalysisPipelineMessage(analysisResult));
-      metadata.analysisProvider = analysisResult.provider;
-      metadata.analysisStatus = analysisResult.status;
       metadata.analysisTitle = analysisResult.title;
       metadata.analysisPreview = analysisResult.preview;
       metadata.analysisActionItems = analysisResult.actionItems;
-      metadata.analysisSource = analysisResult.provider.startsWith('local-agent') ? 'local_agent' : 'remote_backend';
+      metadata.analysisSource = 'local_agent';
       metadata.localAgentState = localAgentHealth.state;
-      metadata.localAgentProvider = localAgentHealth.provider;
-      metadata.localAgentModel = localAgentHealth.model;
       stage = 'analysis_ready';
     }
 
@@ -476,10 +469,14 @@ function App() {
         },
       });
 
+      if (response.status === 'failed') {
+        throw new Error('Screen text extraction is not ready. Check the local assistant setup and retry.');
+      }
+
       setScreenContext((current) => ({
         ...current,
         ocrState: 'completed',
-        ocrProvider: response.provider,
+        ocrProvider: null,
         ocrTextLength: response.textLength,
         ocrErrorMessage: null,
       }));
@@ -539,7 +536,7 @@ function App() {
     ocrResult: ScreenOcrResponse,
   ): Promise<ScreenAnalysisResponse> {
     if (localAgentHealth.state !== 'ready') {
-      throw new Error('Local Agent is unavailable. Start devjarvis-local-agent and retry.');
+      throw new Error('Local assistant analysis is not ready. Start the local assistant and retry.');
     }
 
     if (!ocrResult.textFound || ocrResult.text.trim().length === 0) {
@@ -624,11 +621,9 @@ function App() {
 
 function buildLocalAnalysisContext(command: CommandInput, captured: ScreenCaptureResult, ocrResult: ScreenOcrResponse): string {
   return [
-    `source=${command.source}`,
-    `contextMode=${command.contextMode}`,
-    `screen=${captured.width}x${captured.height}`,
-    `ocrProvider=${ocrResult.provider}`,
-    `ocrTextLength=${ocrResult.textLength}`,
+    `selectedScreenSize=${captured.width}x${captured.height}`,
+    `readableTextLength=${ocrResult.textLength}`,
+    `requestType=${formatLocalAgentTitle(command.intent)}`,
   ].join('\n');
 }
 
@@ -726,15 +721,15 @@ function formatAnalysisPipelineMessage(result: ScreenAnalysisResponse): string {
     return 'Analysis waiting for readable text';
   }
 
-  return result.title || `Analysis ready · ${result.provider}`;
+  return result.title || 'Analysis ready';
 }
 
 function formatOcrPipelineMessage(result: ScreenOcrResponse): string {
   if (result.textFound) {
-    return `OCR extracted · ${result.textLength.toLocaleString()} chars`;
+    return `Screen text extracted · ${result.textLength.toLocaleString()} chars`;
   }
 
-  return `OCR ready · ${result.provider}`;
+  return 'No readable text found';
 }
 
 function formatScreenContextValue(screenContext: ScreenContextSnapshot): string {

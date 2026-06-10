@@ -38,12 +38,17 @@ class LocalOcrImagePayload(BaseModel):
 class LocalOcrExtractRequest(BaseModel):
     commandId: str | None = Field(default=None, max_length=80)
     intent: str | None = Field(default=None, max_length=80)
+    contextMode: str | None = Field(default=None, max_length=40)
     image: LocalOcrImagePayload
 
 
 class LocalOcrTextBlock(BaseModel):
     text: str
     confidence: float | None = None
+    x: int | None = None
+    y: int | None = None
+    width: int | None = None
+    height: int | None = None
 
 
 class LocalOcrExtractResponse(BaseModel):

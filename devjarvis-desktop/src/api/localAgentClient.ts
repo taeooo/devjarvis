@@ -28,13 +28,13 @@ async function requestLocalAgentJson<T>(path: string, init?: RequestInit, timeou
 
     const payload = (await response.json()) as ApiResponse<T>;
     if (!response.ok || !payload.success || payload.data === null) {
-      throw new Error(payload.error?.message ?? `Local Agent request failed. status=${response.status}`);
+      throw new Error(payload.error?.message ?? 'Local assistant request failed.');
     }
 
     return payload.data;
   } catch (caught) {
     if (caught instanceof DOMException && caught.name === 'AbortError') {
-      throw new Error('Local Agent request timed out.');
+      throw new Error('Local assistant request timed out.');
     }
     throw caught;
   } finally {
@@ -51,11 +51,7 @@ export async function getLocalAgentHealth(): Promise<LocalAgentHealthResponse> {
 export async function extractScreenOcrWithLocalAgent(input: ScreenOcrRequest): Promise<ScreenOcrResponse> {
   return requestLocalAgentJson<ScreenOcrResponse>('/internal/local-ocr/extract', {
     method: 'POST',
-    body: JSON.stringify({
-      commandId: input.commandId,
-      intent: input.intent,
-      image: input.image,
-    }),
+    body: JSON.stringify(input),
   }, 30000);
 }
 

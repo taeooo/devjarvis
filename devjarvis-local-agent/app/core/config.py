@@ -33,10 +33,11 @@ class Settings(BaseSettings):
     max_output_tokens: int = Field(default=900)
     temperature: float = Field(default=0.1)
 
-    ocr_provider: str = Field(default="placeholder")
+    ocr_provider: str = Field(default="rapidocr")
     ocr_max_image_bytes: int = Field(default=1_500_000)
-    ocr_max_width: int = Field(default=1600)
-    ocr_max_height: int = Field(default=1200)
+    ocr_max_width: int = Field(default=4096)
+    ocr_max_height: int = Field(default=4096)
+    ocr_slow_warning_millis: int = Field(default=5000)
 
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: [

@@ -5,6 +5,7 @@ from app.api.health import router as health_router
 from app.api.local_llm import router as local_llm_router
 from app.api.local_ocr import router as local_ocr_router
 from app.core.config import get_settings
+from app.core.exceptions import register_exception_handlers
 from app.core.security import LoopbackOnlyMiddleware
 
 
@@ -31,6 +32,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    register_exception_handlers(app)
     app.include_router(health_router)
     app.include_router(local_llm_router)
     app.include_router(local_ocr_router)

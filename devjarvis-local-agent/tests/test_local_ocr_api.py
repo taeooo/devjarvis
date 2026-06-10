@@ -16,8 +16,8 @@ class StubLocalOcrService:
             available=True,
             provider="placeholder",
             maxImageBytes=1_500_000,
-            maxWidth=1600,
-            maxHeight=1200,
+            maxWidth=4096,
+            maxHeight=4096,
         )
 
     async def extract(self, request: LocalOcrExtractRequest) -> LocalOcrExtractResponse:
@@ -25,15 +25,16 @@ class StubLocalOcrService:
             requestId=request.commandId or "stub",
             provider="placeholder",
             status="completed",
-            text="hello",
+            text="hello screen",
             textFound=True,
-            textLength=5,
-            preview="hello",
+            textLength=12,
+            preview="hello screen",
             width=request.image.width,
             height=request.image.height,
             mimeType=request.image.mimeType,
             byteSize=request.image.byteSize,
-            extractedAt="2026-01-01T00:00:00+00:00",
+            warnings=[],
+            extractedAt="2026-06-11T00:00:00+00:00",
         )
 
 
@@ -58,17 +59,40 @@ def test_local_ocr_extract() -> None:
         json={
             "commandId": "cmd-1",
             "intent": "screen_summary",
+            "contextMode": "screen",
             "image": {
                 "dataUrl": _JPEG_DATA_URL,
                 "mimeType": "image/jpeg",
                 "width": 10,
                 "height": 10,
                 "byteSize": len(_JPEG_BYTES),
-                "capturedAt": "2026-01-01T00:00:00+00:00",
+                "capturedAt": "2026-06-11T00:00:00+09:00",
             },
         },
     )
 
     app.dependency_overrides.clear()
     assert response.status_code == 200
-    assert response.json()["data"]["text"] == "hello"
+    assert response.json()["data"]["textFound"] is True
+
+
+def test_local_ocr_extract_rejects_invalid_payload() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/internal/local-ocr/extract",
+        headers={"host": "127.0.0.1:17997"},
+        json={
+            "commandId": "cmd-1",
+            "intent": "screen_summary",
+            "image": {
+                "dataUrl": "data:image/jpeg;base64,not-base64",
+                "mimeType": "image/jpeg",
+                "width": 10,
+                "height": 10,
+                "byteSize": 10,
+            },
+        },
+    )
+
+    assert response.status_code in {400, 422}

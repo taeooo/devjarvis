@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.responses import ApiResponse
 from app.schemas.local_ocr import LocalOcrExtractRequest, LocalOcrExtractResponse, LocalOcrHealthResponse
@@ -19,4 +19,7 @@ async def extract(
     request: LocalOcrExtractRequest,
     service: LocalOcrService = Depends(get_local_ocr_service),
 ) -> ApiResponse[LocalOcrExtractResponse]:
-    return ApiResponse.ok(await service.extract(request))
+    try:
+        return ApiResponse.ok(await service.extract(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid screen image payload.") from exc
