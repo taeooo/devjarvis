@@ -30,3 +30,17 @@ devjarvis:
   ai-server:
     base-url: http://devjarvis-ai-server:8000
     timeout-millis: 3000
+
+  security:
+    cors:
+      allowed-origins:
+        - http://localhost:1420
+        - http://127.0.0.1:1420
+        - http://tauri.localhost
+        - https://tauri.localhost
+        - tauri://localhost
+  rate-limit:
+    enabled: true
+    write-requests-per-minute: 60
+    manifest-requests-per-minute: 10
+    max-tracked-clients: 10000
