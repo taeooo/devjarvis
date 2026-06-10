@@ -1,18 +1,20 @@
+from base64 import b64encode
+
 from fastapi.testclient import TestClient
 
 from app.api.local_ocr import get_local_ocr_service
 from app.main import app
 from app.schemas.local_ocr import LocalOcrExtractRequest, LocalOcrExtractResponse, LocalOcrHealthResponse
 
-PNG_1X1_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
-PNG_1X1_BYTE_SIZE = 68
+_JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"0" * 32
+_JPEG_DATA_URL = "data:image/jpeg;base64," + b64encode(_JPEG_BYTES).decode("ascii")
 
 
 class StubLocalOcrService:
     async def health(self) -> LocalOcrHealthResponse:
         return LocalOcrHealthResponse(
             available=True,
-            provider="stub",
+            provider="placeholder",
             maxImageBytes=1_500_000,
             maxWidth=4096,
             maxHeight=4096,
@@ -20,8 +22,8 @@ class StubLocalOcrService:
 
     async def extract(self, request: LocalOcrExtractRequest) -> LocalOcrExtractResponse:
         return LocalOcrExtractResponse(
-            requestId=request.commandId,
-            provider="stub",
+            requestId=request.commandId or "stub",
+            provider="placeholder",
             status="completed",
             text="hello screen",
             textFound=True,
@@ -59,11 +61,11 @@ def test_local_ocr_extract() -> None:
             "intent": "screen_summary",
             "contextMode": "screen",
             "image": {
-                "dataUrl": PNG_1X1_DATA_URL,
-                "mimeType": "image/png",
-                "width": 1,
-                "height": 1,
-                "byteSize": PNG_1X1_BYTE_SIZE,
+                "dataUrl": _JPEG_DATA_URL,
+                "mimeType": "image/jpeg",
+                "width": 10,
+                "height": 10,
+                "byteSize": len(_JPEG_BYTES),
                 "capturedAt": "2026-06-11T00:00:00+09:00",
             },
         },
@@ -72,3 +74,25 @@ def test_local_ocr_extract() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 200
     assert response.json()["data"]["textFound"] is True
+
+
+def test_local_ocr_extract_rejects_invalid_payload() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/internal/local-ocr/extract",
+        headers={"host": "127.0.0.1:17997"},
+        json={
+            "commandId": "cmd-1",
+            "intent": "screen_summary",
+            "image": {
+                "dataUrl": "data:image/jpeg;base64,not-base64",
+                "mimeType": "image/jpeg",
+                "width": 10,
+                "height": 10,
+                "byteSize": 10,
+            },
+        },
+    )
+
+    assert response.status_code in {400, 422}

@@ -2,8 +2,8 @@ import type {
   LocalAgentHealthResponse,
   LocalLlmAnalyzeRequest,
   LocalLlmAnalyzeResponse,
-  LocalOcrExtractRequest,
-  LocalOcrExtractResponse,
+  ScreenOcrRequest,
+  ScreenOcrResponse,
 } from '../types/jarvisCommand';
 import type { ApiResponse } from '../types/projectScanner';
 
@@ -48,16 +48,15 @@ export async function getLocalAgentHealth(): Promise<LocalAgentHealthResponse> {
   });
 }
 
-export async function analyzeWithLocalAgent(input: LocalLlmAnalyzeRequest): Promise<LocalLlmAnalyzeResponse> {
-  return requestLocalAgentJson<LocalLlmAnalyzeResponse>('/internal/local-llm/analyze', {
+export async function extractScreenOcrWithLocalAgent(input: ScreenOcrRequest): Promise<ScreenOcrResponse> {
+  return requestLocalAgentJson<ScreenOcrResponse>('/internal/local-ocr/extract', {
     method: 'POST',
     body: JSON.stringify(input),
   }, 30000);
 }
 
-
-export async function extractOcrWithLocalAgent(input: LocalOcrExtractRequest): Promise<LocalOcrExtractResponse> {
-  return requestLocalAgentJson<LocalOcrExtractResponse>('/internal/local-ocr/extract', {
+export async function analyzeWithLocalAgent(input: LocalLlmAnalyzeRequest): Promise<LocalLlmAnalyzeResponse> {
+  return requestLocalAgentJson<LocalLlmAnalyzeResponse>('/internal/local-llm/analyze', {
     method: 'POST',
     body: JSON.stringify(input),
   }, 30000);

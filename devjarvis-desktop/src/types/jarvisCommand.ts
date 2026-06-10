@@ -218,11 +218,11 @@ export type ScreenOcrResponse = {
 
 export type LocalOcrTextBlock = {
   text: string;
-  confidence: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+  confidence?: number | null;
+  x?: number | null;
+  y?: number | null;
+  width?: number | null;
+  height?: number | null;
 };
 
 export type LocalOcrExtractRequest = ScreenOcrRequest;

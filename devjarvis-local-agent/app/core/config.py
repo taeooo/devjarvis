@@ -33,11 +33,11 @@ class Settings(BaseSettings):
     max_output_tokens: int = Field(default=900)
     temperature: float = Field(default=0.1)
 
-    local_ocr_provider: str = Field(default="rapidocr")
-    local_ocr_max_image_bytes: int = Field(default=1_500_000)
-    local_ocr_max_width: int = Field(default=4096)
-    local_ocr_max_height: int = Field(default=4096)
-    local_ocr_slow_warning_millis: int = Field(default=5000)
+    ocr_provider: str = Field(default="rapidocr")
+    ocr_max_image_bytes: int = Field(default=1_500_000)
+    ocr_max_width: int = Field(default=4096)
+    ocr_max_height: int = Field(default=4096)
+    ocr_slow_warning_millis: int = Field(default=5000)
 
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: [
@@ -54,6 +54,14 @@ class Settings(BaseSettings):
         normalized = value.strip()
         if not normalized:
             raise ValueError("host must not be empty")
+        return normalized
+
+    @field_validator("ocr_provider")
+    @classmethod
+    def validate_ocr_provider(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"placeholder", "rapidocr"}:
+            raise ValueError("ocr_provider must be placeholder or rapidocr")
         return normalized
 
     def is_loopback_host(self) -> bool:

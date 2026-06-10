@@ -2,62 +2,59 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-LocalOcrIntent = Literal[
-    "screen_translate",
-    "screen_summary",
-    "screen_error_analysis",
-    "project_diagnosis",
-    "log_analysis",
-    "general_chat",
-]
+LocalOcrProvider = Literal["placeholder", "rapidocr"]
+LocalOcrStatus = Literal["completed", "failed"]
+LocalOcrMimeType = Literal["image/jpeg", "image/png", "image/webp"]
 
 
 class LocalOcrHealthResponse(BaseModel):
     available: bool
-    provider: str
+    provider: LocalOcrProvider
     maxImageBytes: int
     maxWidth: int
     maxHeight: int
     warning: str | None = None
 
 
-class LocalOcrImageRequest(BaseModel):
-    dataUrl: str = Field(min_length=32, max_length=2_500_000)
-    mimeType: str
-    width: int = Field(gt=0)
-    height: int = Field(gt=0)
-    byteSize: int = Field(gt=0)
-    capturedAt: str
+class LocalOcrImagePayload(BaseModel):
+    dataUrl: str = Field(min_length=32, max_length=3_000_000)
+    mimeType: LocalOcrMimeType
+    width: int = Field(gt=0, le=10_000)
+    height: int = Field(gt=0, le=10_000)
+    byteSize: int = Field(gt=0, le=5_000_000)
+    capturedAt: str | None = Field(default=None, max_length=80)
 
-    @field_validator("mimeType")
+    @field_validator("dataUrl")
     @classmethod
-    def validate_mime_type(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if normalized not in {"image/jpeg", "image/png", "image/webp"}:
-            raise ValueError("unsupported image type")
+    def validate_data_url(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized.startswith("data:image/"):
+            raise ValueError("image dataUrl must be a data:image URL")
+        if ";base64," not in normalized:
+            raise ValueError("image dataUrl must be base64 encoded")
         return normalized
 
 
 class LocalOcrExtractRequest(BaseModel):
-    commandId: str
-    intent: LocalOcrIntent = "general_chat"
-    contextMode: str = "screen"
-    image: LocalOcrImageRequest
+    commandId: str | None = Field(default=None, max_length=80)
+    intent: str | None = Field(default=None, max_length=80)
+    contextMode: str | None = Field(default=None, max_length=40)
+    image: LocalOcrImagePayload
 
 
 class LocalOcrTextBlock(BaseModel):
     text: str
-    confidence: float
-    x: int
-    y: int
-    width: int
-    height: int
+    confidence: float | None = None
+    x: int | None = None
+    y: int | None = None
+    width: int | None = None
+    height: int | None = None
 
 
 class LocalOcrExtractResponse(BaseModel):
     requestId: str
-    provider: str
-    status: Literal["completed", "failed"]
+    provider: LocalOcrProvider
+    status: LocalOcrStatus
     text: str
     textFound: bool
     textLength: int
@@ -66,6 +63,6 @@ class LocalOcrExtractResponse(BaseModel):
     height: int
     mimeType: str
     byteSize: int
-    blocks: list[LocalOcrTextBlock] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     extractedAt: str
+    blocks: list[LocalOcrTextBlock] = Field(default_factory=list)

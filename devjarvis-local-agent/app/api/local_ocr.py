@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.responses import ApiResponse
 from app.schemas.local_ocr import LocalOcrExtractRequest, LocalOcrExtractResponse, LocalOcrHealthResponse
-from app.services.local_ocr_service import LocalOcrService, LocalOcrValidationError, get_local_ocr_service
+from app.services.local_ocr_service import LocalOcrService, get_local_ocr_service
 
 router = APIRouter(prefix="/internal/local-ocr", tags=["local-ocr"])
 
@@ -21,5 +21,5 @@ async def extract(
 ) -> ApiResponse[LocalOcrExtractResponse]:
     try:
         return ApiResponse.ok(await service.extract(request))
-    except LocalOcrValidationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid screen image payload.") from exc
