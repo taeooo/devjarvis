@@ -8,7 +8,14 @@ import { ContextStatusPanel } from './components/ContextStatusPanel';
 import { JarvisCore } from './components/JarvisCore';
 import { VoiceStatusPanel } from './components/VoiceStatusPanel';
 import { createProject, registerProjectManifest } from './api/backendClient';
-import { analyzeWithLocalAgent, extractScreenOcrWithLocalAgent, getLocalAgentHealth, localAgentBaseUrl } from './api/localAgentClient';
+import {
+  analyzeWithLocalAgent,
+  extractScreenOcrWithLocalAgent,
+  getLocalAgentAppHealth,
+  getLocalAgentHealth,
+  getLocalOcrHealth,
+  localAgentBaseUrl,
+} from './api/localAgentClient';
 import { notifyCommandResult } from './utils/nativeWindow';
 import { createClientId, createCommandInput, createCommandPlan } from './utils/commandRouter';
 import { captureScreenFrame, isScreenCaptureSupported } from './utils/screenCapture';
@@ -38,6 +45,15 @@ type PipelineExecutionSummary = {
   messages: string[];
   metadata: NonNullable<CommandResult['metadata']>;
   stage: CommandPipelineStage;
+};
+
+type LocalAssistantReadiness = {
+  ready: boolean;
+  appReady: boolean;
+  ocrReady: boolean;
+  llmReady: boolean;
+  message: string | null;
+  checkedAt: string;
 };
 
 const MAX_RESULT_HISTORY = 8;
@@ -130,51 +146,27 @@ function App() {
   useEffect(() => {
     let cancelled = false;
 
-    async function checkLocalAgent() {
-      setLocalAgentHealth((current) => ({
-        ...current,
-        state: 'checking',
-        errorMessage: null,
-      }));
-
-      try {
-        const response = await getLocalAgentHealth();
-        if (cancelled) {
-          return;
-        }
-
-        setLocalAgentHealth({
-          state: response.available ? 'ready' : 'unavailable',
-          provider: response.provider,
-          model: response.model,
-          baseUrl: response.baseUrl,
-          modelRouting: response.modelRouting ?? {},
-          warning: response.warning,
-          checkedAt: new Date().toISOString(),
-          errorMessage: response.available ? null : response.warning ?? 'Local LLM is unavailable.',
-        });
-      } catch (caught) {
-        if (cancelled) {
-          return;
-        }
-
-        setLocalAgentHealth({
-          state: 'unavailable',
-          provider: null,
-          model: null,
-          baseUrl: localAgentBaseUrl,
-          modelRouting: {},
-          warning: null,
-          checkedAt: new Date().toISOString(),
-          errorMessage: toErrorMessage(caught),
-        });
+    async function pollLocalAssistant() {
+      if (!cancelled) {
+        setLocalAgentHealth((current) => ({
+          ...current,
+          state: 'checking',
+          errorMessage: null,
+        }));
       }
+
+      const readiness = await checkLocalAssistantReadiness();
+      if (cancelled) {
+        return;
+      }
+
+      applyLocalAssistantReadiness(readiness);
     }
 
-    void checkLocalAgent();
+    void pollLocalAssistant();
 
     const intervalId = window.setInterval(() => {
-      void checkLocalAgent();
+      void pollLocalAssistant();
     }, 30000);
 
     return () => {
@@ -228,6 +220,38 @@ function App() {
       tone: selectedProject ? 'ready' : 'idle',
     },
   ]), [screenContext, selectedProject, voiceState]);
+
+  async function refreshLocalAssistantReadiness(): Promise<LocalAssistantReadiness> {
+    setLocalAgentHealth((current) => ({
+      ...current,
+      state: 'checking',
+      errorMessage: null,
+    }));
+
+    const readiness = await checkLocalAssistantReadiness();
+    applyLocalAssistantReadiness(readiness);
+    return readiness;
+  }
+
+  function applyLocalAssistantReadiness(readiness: LocalAssistantReadiness) {
+    setLocalAgentHealth({
+      state: readiness.ready ? 'ready' : 'unavailable',
+      provider: null,
+      model: null,
+      baseUrl: localAgentBaseUrl,
+      modelRouting: {},
+      warning: readiness.message,
+      checkedAt: readiness.checkedAt,
+      errorMessage: readiness.ready ? null : readiness.message,
+    });
+  }
+
+  async function ensureLocalAssistantReady(): Promise<void> {
+    const readiness = await refreshLocalAssistantReadiness();
+    if (!readiness.ready) {
+      throw new Error(readiness.message ?? getDefaultLocalAssistantSetupMessage());
+    }
+  }
 
   async function handleSelectProjectFolder() {
     setSystemMessage(null);
@@ -308,7 +332,7 @@ function App() {
         title: 'Command failed',
         summary: message,
         detail: command.text,
-        nextStep: 'Check permission or command context',
+        nextStep: buildFailureNextStep(message),
         status: 'failed',
         pipelineStage: 'failed',
         completedAt: new Date().toISOString(),
@@ -333,6 +357,9 @@ function App() {
     let stage: CommandPipelineStage = 'completed';
 
     if (plan.needsScreenCapture) {
+      updateProcessingStage(plan.command.id, 'received', 'Checking local assistant');
+      await ensureLocalAssistantReady();
+
       updateProcessingStage(plan.command.id, 'capturing_screen', 'Capturing selected screen');
       const captured = await refreshScreenContext(plan.command);
       const screenSize = `${captured.width}×${captured.height}`;
@@ -355,7 +382,6 @@ function App() {
       metadata.analysisPreview = analysisResult.preview;
       metadata.analysisActionItems = analysisResult.actionItems;
       metadata.analysisSource = 'local_agent';
-      metadata.localAgentState = localAgentHealth.state;
       stage = 'analysis_ready';
     }
 
@@ -535,10 +561,6 @@ function App() {
     captured: ScreenCaptureResult,
     ocrResult: ScreenOcrResponse,
   ): Promise<ScreenAnalysisResponse> {
-    if (localAgentHealth.state !== 'ready') {
-      throw new Error('Local assistant analysis is not ready. Start the local assistant and retry.');
-    }
-
     if (!ocrResult.textFound || ocrResult.text.trim().length === 0) {
       return {
         requestId: command.id,
@@ -618,6 +640,59 @@ function App() {
 }
 
 
+
+async function checkLocalAssistantReadiness(): Promise<LocalAssistantReadiness> {
+  const checkedAt = new Date().toISOString();
+  const [appResult, ocrResult, llmResult] = await Promise.allSettled([
+    getLocalAgentAppHealth(),
+    getLocalOcrHealth(),
+    getLocalAgentHealth(),
+  ]);
+
+  const appReady = appResult.status === 'fulfilled'
+    && appResult.value.status === 'UP'
+    && appResult.value.loopbackOnly === true;
+  const ocrReady = ocrResult.status === 'fulfilled' && ocrResult.value.available === true;
+  const llmReady = llmResult.status === 'fulfilled' && llmResult.value.available === true;
+  const ready = appReady && ocrReady && llmReady;
+
+  return {
+    ready,
+    appReady,
+    ocrReady,
+    llmReady,
+    message: ready ? null : buildLocalAssistantSetupMessage(appReady, ocrReady, llmReady),
+    checkedAt,
+  };
+}
+
+function buildLocalAssistantSetupMessage(appReady: boolean, ocrReady: boolean, llmReady: boolean): string {
+  if (!appReady) {
+    return 'Local Assistant is not running. Start DevJarvis Local Agent, then retry.';
+  }
+
+  if (!ocrReady) {
+    return 'Local screen reading is not ready. Check the Local Agent OCR setup, then retry.';
+  }
+
+  if (!llmReady) {
+    return 'Local reasoning is not ready. Start Ollama and install the configured local models, then retry.';
+  }
+
+  return getDefaultLocalAssistantSetupMessage();
+}
+
+function getDefaultLocalAssistantSetupMessage(): string {
+  return 'Local Assistant is not ready. Start the local services, then retry.';
+}
+
+function buildFailureNextStep(message: string): string {
+  if (message.toLowerCase().includes('local')) {
+    return 'Start Local Agent and Ollama, then retry';
+  }
+
+  return 'Check permission or command context';
+}
 
 function buildLocalAnalysisContext(command: CommandInput, captured: ScreenCaptureResult, ocrResult: ScreenOcrResponse): string {
   return [

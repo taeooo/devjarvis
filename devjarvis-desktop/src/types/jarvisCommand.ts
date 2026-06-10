@@ -156,6 +156,22 @@ export type LocalAgentHealthSnapshot = {
   errorMessage: string | null;
 };
 
+export type LocalAgentAppHealthResponse = {
+  status: string;
+  service: string;
+  version: string;
+  loopbackOnly: boolean;
+};
+
+export type LocalOcrHealthResponse = {
+  available: boolean;
+  provider: string;
+  maxImageBytes: number;
+  maxWidth: number;
+  maxHeight: number;
+  warning: string | null;
+};
+
 export type LocalAgentHealthResponse = {
   available: boolean;
   provider: string;

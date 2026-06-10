@@ -1,7 +1,9 @@
 import type {
+  LocalAgentAppHealthResponse,
   LocalAgentHealthResponse,
   LocalLlmAnalyzeRequest,
   LocalLlmAnalyzeResponse,
+  LocalOcrHealthResponse,
   ScreenOcrRequest,
   ScreenOcrResponse,
 } from '../types/jarvisCommand';
@@ -40,6 +42,18 @@ async function requestLocalAgentJson<T>(path: string, init?: RequestInit, timeou
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+export async function getLocalAgentAppHealth(): Promise<LocalAgentAppHealthResponse> {
+  return requestLocalAgentJson<LocalAgentAppHealthResponse>('/health', {
+    method: 'GET',
+  });
+}
+
+export async function getLocalOcrHealth(): Promise<LocalOcrHealthResponse> {
+  return requestLocalAgentJson<LocalOcrHealthResponse>('/internal/local-ocr/health', {
+    method: 'GET',
+  });
 }
 
 export async function getLocalAgentHealth(): Promise<LocalAgentHealthResponse> {
