@@ -807,6 +807,29 @@ input:disabled {
   line-height: 1.45;
 }
 
+.result-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.result-meta-row span,
+.result-card small {
+  display: inline-flex;
+  width: fit-content;
+  border: 1px solid rgba(103, 232, 249, 0.14);
+  border-radius: 999px;
+  padding: 0.22rem 0.46rem;
+  color: rgba(186, 230, 253, 0.78);
+  font-size: 0.66rem;
+  font-weight: 850;
+}
+
+.result-card small {
+  border-color: rgba(52, 211, 153, 0.2);
+  color: rgba(167, 243, 208, 0.82);
+}
+
 .result-processing {
   border-color: rgba(56, 189, 248, 0.28);
 }

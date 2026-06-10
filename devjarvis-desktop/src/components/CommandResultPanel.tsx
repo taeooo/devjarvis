@@ -1,6 +1,7 @@
 import type { CommandResult } from '../types/jarvisCommand';
+import { formatIntent } from '../utils/commandRouter';
 
-const MAX_RENDERED_RESULTS = 4;
+const MAX_RENDERED_RESULTS = 5;
 
 type CommandResultPanelProps = {
   results: CommandResult[];
@@ -27,7 +28,12 @@ export function CommandResultPanel({ results }: CommandResultPanelProps) {
                 </time>
               </div>
               <strong>{result.title}</strong>
+              <div className="result-meta-row">
+                <span>{formatIntent(result.intent)}</span>
+                <span>{formatContextMode(result.contextMode)}</span>
+              </div>
               <p>{result.summary}</p>
+              {result.nextStep && <small>{result.nextStep}</small>}
             </article>
           ))
         )}
@@ -46,6 +52,22 @@ function formatResultStatus(status: CommandResult['status']): string {
   }
 
   return 'Completed';
+}
+
+function formatContextMode(contextMode: CommandResult['contextMode']): string {
+  if (contextMode === 'auto') {
+    return 'Screen + Project';
+  }
+
+  if (contextMode === 'screen') {
+    return 'Screen';
+  }
+
+  if (contextMode === 'project') {
+    return 'Project';
+  }
+
+  return 'General';
 }
 
 function formatResultTime(value: string): string {
