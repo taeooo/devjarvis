@@ -14,6 +14,7 @@ public class RateLimitProperties {
     private int writeRequestsPerMinute = 60;
     private int manifestRequestsPerMinute = 10;
     private int screenOcrRequestsPerMinute = 12;
+    private int screenAnalysisRequestsPerMinute = 12;
     private int maxTrackedClients = 10_000;
     private List<String> excludedPaths = List.of(
             "/actuator/health",
@@ -51,6 +52,14 @@ public class RateLimitProperties {
 
     public void setScreenOcrRequestsPerMinute(int screenOcrRequestsPerMinute) {
         this.screenOcrRequestsPerMinute = screenOcrRequestsPerMinute;
+    }
+
+    public int getScreenAnalysisRequestsPerMinute() {
+        return screenAnalysisRequestsPerMinute;
+    }
+
+    public void setScreenAnalysisRequestsPerMinute(int screenAnalysisRequestsPerMinute) {
+        this.screenAnalysisRequestsPerMinute = screenAnalysisRequestsPerMinute;
     }
 
     public int getMaxTrackedClients() {

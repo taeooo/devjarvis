@@ -82,6 +82,9 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
         if (path.equals("/api/screen/ocr")) {
             return properties.getScreenOcrRequestsPerMinute();
         }
+        if (path.equals("/api/screen/analyze")) {
+            return properties.getScreenAnalysisRequestsPerMinute();
+        }
         return properties.getWriteRequestsPerMinute();
     }
 

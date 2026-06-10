@@ -7,7 +7,7 @@ import { CommandResultPanel } from './components/CommandResultPanel';
 import { ContextStatusPanel } from './components/ContextStatusPanel';
 import { JarvisCore } from './components/JarvisCore';
 import { VoiceStatusPanel } from './components/VoiceStatusPanel';
-import { createProject, extractScreenOcr, registerProjectManifest } from './api/backendClient';
+import { analyzeScreen, createProject, extractScreenOcr, registerProjectManifest } from './api/backendClient';
 import { notifyCommandResult } from './utils/nativeWindow';
 import { createClientId, createCommandInput, createCommandPlan } from './utils/commandRouter';
 import { captureScreenFrame, isScreenCaptureSupported } from './utils/screenCapture';
@@ -16,6 +16,7 @@ import type {
   CommandPipelineStage,
   CommandResult,
   ContextStatusItem,
+  ScreenAnalysisResponse,
   ScreenCaptureResult,
   ScreenContextSnapshot,
   ScreenOcrResponse,
@@ -48,6 +49,9 @@ const initialScreenContext: ScreenContextSnapshot = {
   ocrProvider: null,
   ocrTextLength: null,
   ocrErrorMessage: null,
+  analysisState: 'not_requested',
+  analysisProvider: null,
+  analysisErrorMessage: null,
 };
 
 function App() {
@@ -262,6 +266,15 @@ function App() {
       metadata.ocrTextFound = ocrResult.textFound;
       metadata.ocrTextLength = ocrResult.textLength;
       metadata.ocrPreview = ocrResult.preview;
+
+      updateProcessingStage(plan.command.id, 'analyzing_screen', 'Analyzing screen text');
+      const analysisResult = await requestScreenAnalysis(plan.command, captured, ocrResult);
+      messages.push(formatAnalysisPipelineMessage(analysisResult));
+      metadata.analysisProvider = analysisResult.provider;
+      metadata.analysisStatus = analysisResult.status;
+      metadata.analysisTitle = analysisResult.title;
+      metadata.analysisPreview = analysisResult.preview;
+      metadata.analysisActionItems = analysisResult.actionItems;
       stage = 'analysis_ready';
     }
 
@@ -320,6 +333,9 @@ function App() {
         ocrProvider: null,
         ocrTextLength: null,
         ocrErrorMessage: null,
+        analysisState: 'not_requested',
+        analysisProvider: null,
+        analysisErrorMessage: null,
       });
 
       return captured;
@@ -336,6 +352,9 @@ function App() {
         ocrProvider: null,
         ocrTextLength: null,
         ocrErrorMessage: null,
+        analysisState: 'not_requested',
+        analysisProvider: null,
+        analysisErrorMessage: null,
       });
       throw new Error(message);
     }
@@ -382,6 +401,51 @@ function App() {
         ocrProvider: null,
         ocrTextLength: null,
         ocrErrorMessage: message,
+      }));
+      throw new Error(message);
+    }
+  }
+
+  async function requestScreenAnalysis(
+    command: CommandInput,
+    captured: ScreenCaptureResult,
+    ocrResult: ScreenOcrResponse,
+  ): Promise<ScreenAnalysisResponse> {
+    setScreenContext((current) => ({
+      ...current,
+      analysisState: 'analyzing',
+      analysisProvider: null,
+      analysisErrorMessage: null,
+    }));
+
+    try {
+      const response = await analyzeScreen({
+        commandId: command.id,
+        intent: command.intent,
+        contextMode: command.contextMode,
+        ocrProvider: ocrResult.provider,
+        ocrText: ocrResult.text,
+        ocrTextFound: ocrResult.textFound,
+        width: captured.width,
+        height: captured.height,
+        capturedAt: captured.capturedAt,
+      });
+
+      setScreenContext((current) => ({
+        ...current,
+        analysisState: 'completed',
+        analysisProvider: response.provider,
+        analysisErrorMessage: null,
+      }));
+
+      return response;
+    } catch (caught) {
+      const message = toErrorMessage(caught);
+      setScreenContext((current) => ({
+        ...current,
+        analysisState: 'failed',
+        analysisProvider: null,
+        analysisErrorMessage: message,
       }));
       throw new Error(message);
     }
@@ -438,6 +502,14 @@ function App() {
       </section>
     </AppShell>
   );
+}
+
+function formatAnalysisPipelineMessage(result: ScreenAnalysisResponse): string {
+  if (result.status === 'no_text') {
+    return 'Analysis waiting for readable text';
+  }
+
+  return result.title || `Analysis ready · ${result.provider}`;
 }
 
 function formatOcrPipelineMessage(result: ScreenOcrResponse): string {

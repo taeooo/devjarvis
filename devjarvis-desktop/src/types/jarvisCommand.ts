@@ -18,6 +18,7 @@ export type CommandPipelineStage =
   | 'received'
   | 'capturing_screen'
   | 'extracting_ocr'
+  | 'analyzing_screen'
   | 'refreshing_manifest'
   | 'analysis_ready'
   | 'completed'
@@ -38,6 +39,8 @@ export type CommandResultDisplayMode = 'notify' | 'open_app' | 'overlay';
 
 export type OcrExtractionState = 'not_requested' | 'uploading' | 'extracting' | 'completed' | 'failed';
 
+export type ScreenAnalysisState = 'not_requested' | 'analyzing' | 'completed' | 'failed';
+
 export type CommandResultMetadata = {
   screenSize?: string;
   manifestTargetFileCount?: number;
@@ -48,6 +51,11 @@ export type CommandResultMetadata = {
   ocrTextLength?: number;
   ocrTextFound?: boolean;
   ocrPreview?: string;
+  analysisProvider?: string;
+  analysisStatus?: string;
+  analysisTitle?: string;
+  analysisPreview?: string;
+  analysisActionItems?: string[];
 };
 
 export type CommandResult = {
@@ -99,6 +107,9 @@ export type ScreenContextSnapshot = {
   ocrProvider: string | null;
   ocrTextLength: number | null;
   ocrErrorMessage: string | null;
+  analysisState: ScreenAnalysisState;
+  analysisProvider: string | null;
+  analysisErrorMessage: string | null;
 };
 
 export type ScreenOcrRequest = {
@@ -129,4 +140,32 @@ export type ScreenOcrResponse = {
   byteSize: number;
   warnings: string[];
   extractedAt: string;
+};
+
+
+export type ScreenAnalysisRequest = {
+  commandId: string;
+  intent: CommandIntent;
+  contextMode: ContextMode;
+  ocrProvider: string;
+  ocrText: string;
+  ocrTextFound: boolean;
+  width: number;
+  height: number;
+  capturedAt: string;
+};
+
+export type ScreenAnalysisResponse = {
+  requestId: string;
+  provider: string;
+  status: string;
+  intent: CommandIntent;
+  title: string;
+  summary: string;
+  detail: string;
+  preview: string;
+  actionItems: string[];
+  textUsedLength: number;
+  warnings: string[];
+  analyzedAt: string;
 };

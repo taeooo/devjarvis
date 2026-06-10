@@ -859,3 +859,28 @@ input:disabled {
   line-height: 1.45;
   white-space: pre-wrap;
 }
+
+.result-analysis-preview {
+  border: 1px solid rgba(82, 197, 255, 0.18);
+  border-radius: 14px;
+  background: rgba(35, 116, 190, 0.1);
+  padding: 10px 12px;
+  color: rgba(229, 247, 255, 0.82);
+  font-size: 0.76rem;
+  line-height: 1.5;
+  max-height: 118px;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+
+.result-action-list {
+  margin: 0;
+  padding-left: 16px;
+  color: rgba(198, 232, 255, 0.72);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.result-action-list li + li {
+  margin-top: 4px;
+}

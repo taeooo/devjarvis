@@ -53,6 +53,10 @@ export function ContextStatusPanel({
           <strong>{formatOcrSnapshot(screenContext)}</strong>
         </div>
         <div className="snapshot-strip">
+          <span>Analysis</span>
+          <strong>{formatAnalysisSnapshot(screenContext)}</strong>
+        </div>
+        <div className="snapshot-strip">
           <span>Manifest</span>
           <strong>{latestSummary ? `${latestSummary.targetFileCount.toLocaleString()} files` : 'On command'}</strong>
         </div>
@@ -114,6 +118,23 @@ function formatOcrSnapshot(screenContext: ScreenContextSnapshot): string {
   }
 
   if (screenContext.ocrState === 'failed') {
+    return 'Failed';
+  }
+
+  return 'On command';
+}
+
+
+function formatAnalysisSnapshot(screenContext: ScreenContextSnapshot): string {
+  if (screenContext.analysisState === 'analyzing') {
+    return 'Analyzing';
+  }
+
+  if (screenContext.analysisState === 'completed') {
+    return screenContext.analysisProvider ?? 'Ready';
+  }
+
+  if (screenContext.analysisState === 'failed') {
     return 'Failed';
   }
 
