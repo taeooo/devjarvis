@@ -13,10 +13,18 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  width: 100%;
+  min-width: 320px;
+  min-height: 100%;
+}
+
 body {
   margin: 0;
-  min-width: 320px;
   min-height: 100vh;
+  min-height: 100dvh;
   overflow-x: hidden;
   background:
     radial-gradient(circle at 50% -8%, rgba(0, 212, 255, 0.28), transparent 25rem),
@@ -42,10 +50,13 @@ input:disabled {
 
 .app-shell {
   position: relative;
-  width: min(1240px, calc(100% - 2rem));
+  display: flex;
+  flex-direction: column;
+  width: min(1760px, calc(100% - 2rem));
   min-height: 100vh;
+  min-height: 100dvh;
   margin: 0 auto;
-  padding: 1.15rem 0 1.4rem;
+  padding: 1rem 0 1rem;
 }
 
 .app-shell::before {
@@ -197,23 +208,34 @@ input:disabled {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) clamp(340px, 22vw, 420px);
   gap: 1rem;
-  min-height: calc(100vh - 6rem);
+  min-height: 0;
   padding-top: 0.75rem;
 }
 
 .main-command-zone,
 .side-stack {
+  min-height: 0;
+  gap: 1rem;
+}
+
+.main-command-zone {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.side-stack {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
 }
 
 .jarvis-core-panel {
   position: relative;
   display: grid;
-  min-height: min(620px, calc(100vh - 10.5rem));
+  min-height: 0;
+  height: 100%;
   overflow: hidden;
   border: 1px solid rgba(103, 232, 249, 0.24);
   border-radius: 2rem;
@@ -268,7 +290,7 @@ input:disabled {
 .orb-shell {
   position: relative;
   display: grid;
-  width: min(58vw, 24rem);
+  width: min(42vw, 31rem);
   aspect-ratio: 1;
   place-items: center;
 }
@@ -444,6 +466,10 @@ input:disabled {
 
 .side-stack {
   min-width: 0;
+}
+
+.side-stack .context-panel {
+  flex: 1;
 }
 
 .glass-card,
@@ -661,7 +687,7 @@ input:disabled {
 
 @media (max-width: 680px) {
   .app-shell {
-    width: min(100% - 1rem, 1240px);
+    width: min(100% - 1rem, 1760px);
   }
 
   .top-bar,
