@@ -1,0 +1,33 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/schema.json",
+  "productName": "DevJarvis",
+  "version": "0.1.0",
+  "identifier": "com.taeo.devjarvis.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "DevJarvis",
+        "width": 1200,
+        "height": 820,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src http://localhost:8080 http://127.0.0.1:8080; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Local AI troubleshooting assistant for developers.",
+    "longDescription": "DevJarvis is a local-first developer assistant foundation for project scanning, troubleshooting, and future RAG-based code analysis."
+  }
+}

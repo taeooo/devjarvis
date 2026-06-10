@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default DevJarvis desktop permissions. File system access is limited to explicit user folder selection through the dialog plugin.",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-open"]
+}
