@@ -36,3 +36,29 @@ cd /c/projects/devjarvis/devjarvis-local-agent
 source .venv/Scripts/activate
 pytest -q
 ```
+
+
+## Model routing
+
+Local Agent does not hard-code a single LLM. It resolves an Ollama model by command intent.
+
+```text
+screen_translate      -> translation model
+screen_summary        -> reasoning model
+screen_error_analysis -> code model
+project_diagnosis     -> code model
+log_analysis          -> code model
+general_chat          -> default model
+```
+
+Recommended first setup:
+
+```env
+DEVJARVIS_LOCAL_AGENT_DEFAULT_MODEL=qwen3:8b
+DEVJARVIS_LOCAL_AGENT_CODE_MODEL=qwen2.5-coder:7b
+DEVJARVIS_LOCAL_AGENT_TRANSLATION_MODEL=qwen3:8b
+DEVJARVIS_LOCAL_AGENT_REASONING_MODEL=qwen3:8b
+DEVJARVIS_LOCAL_AGENT_FALLBACK_MODEL=qwen3:8b
+```
+
+`DEVJARVIS_LOCAL_AGENT_OLLAMA_MODEL` remains supported for backward-compatible single-model mode.

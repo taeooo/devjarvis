@@ -33,6 +33,12 @@ export function CommandResultPanel({ results }: CommandResultPanelProps) {
                 <span>{formatContextMode(result.contextMode)}</span>
               </div>
               <p>{result.summary}</p>
+              {result.metadata?.screenTarget && (
+                <div className="result-meta-row">
+                  <span>Target {result.metadata.screenTarget}</span>
+                  <span>{result.metadata.screenTargetPolicy ?? 'screen'}</span>
+                </div>
+              )}
               {result.metadata?.ocrPreview && (
                 <div className="result-ocr-preview">{result.metadata.ocrPreview}</div>
               )}

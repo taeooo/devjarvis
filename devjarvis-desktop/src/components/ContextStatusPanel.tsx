@@ -45,6 +45,10 @@ export function ContextStatusPanel({
           <strong>{formatScreenSnapshot(screenContext)}</strong>
         </div>
         <div className="snapshot-strip">
+          <span>Target</span>
+          <strong>{formatScreenTarget(screenContext)}</strong>
+        </div>
+        <div className="snapshot-strip">
           <span>Intent</span>
           <strong>{formatScreenIntent(screenContext)}</strong>
         </div>
@@ -139,4 +143,17 @@ function formatAnalysisSnapshot(screenContext: ScreenContextSnapshot): string {
   }
 
   return 'On command';
+}
+
+
+function formatScreenTarget(screenContext: ScreenContextSnapshot): string {
+  if (screenContext.target.kind === 'manual_picker') {
+    return 'Picker required';
+  }
+
+  if (screenContext.target.kind === 'not_selected') {
+    return 'Not selected';
+  }
+
+  return screenContext.target.label;
 }

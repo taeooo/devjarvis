@@ -7,6 +7,7 @@ import httpx
 
 from app.core.config import Settings
 from app.schemas.local_llm import LocalLlmAnalyzeRequest, LocalLlmAnalyzeResponse, LocalLlmHealthResponse
+from app.services.model_router import build_model_routing_snapshot, resolve_model_route
 from app.services.prompt_builder import build_local_llm_prompt
 from app.services.text_sanitizer import redact_sensitive_text
 
@@ -17,12 +18,17 @@ class OllamaClient:
         self.base_url = settings.ollama_base_url.rstrip("/")
 
     async def health(self) -> LocalLlmHealthResponse:
-        if not self.settings.ollama_model:
+        routing = build_model_routing_snapshot(self.settings)
+        configured_models = {model for model in routing.values() if model}
+        primary_model = routing.get("default") or next(iter(configured_models), None)
+
+        if not configured_models:
             return LocalLlmHealthResponse(
                 available=False,
                 model=None,
                 baseUrl=self.base_url,
-                warning="Ollama model is not configured.",
+                modelRouting=routing,
+                warning="Ollama model routing is not configured.",
             )
 
         try:
@@ -33,27 +39,31 @@ class OllamaClient:
         except Exception as exc:  # noqa: BLE001
             return LocalLlmHealthResponse(
                 available=False,
-                model=self.settings.ollama_model,
+                model=primary_model,
                 baseUrl=self.base_url,
+                modelRouting=routing,
                 warning=f"Ollama is not available: {type(exc).__name__}",
             )
 
         models = payload.get("models", []) if isinstance(payload, dict) else []
         names = {item.get("name") for item in models if isinstance(item, dict)}
         return LocalLlmHealthResponse(
-            available=self.settings.ollama_model in names,
-            model=self.settings.ollama_model,
+            available=all(model in names for model in configured_models),
+            model=primary_model,
             baseUrl=self.base_url,
-            warning=None if self.settings.ollama_model in names else "Configured model was not found in Ollama.",
+            modelRouting=routing,
+            warning=None if all(model in names for model in configured_models) else "One or more configured models were not found in Ollama.",
         )
 
     async def analyze(self, request: LocalLlmAnalyzeRequest) -> LocalLlmAnalyzeResponse:
-        if not self.settings.ollama_model:
+        route = resolve_model_route(request.intent, self.settings)
+        if not route.model:
             return LocalLlmAnalyzeResponse(
                 status="failed",
                 model=None,
+                modelRole=route.role,
                 intent=request.intent,
-                summary="Ollama model is not configured.",
+                summary="Ollama model routing is not configured.",
                 warnings=["ollama_model_missing"],
             )
 
@@ -65,7 +75,7 @@ class OllamaClient:
 
         prompt = build_local_llm_prompt(request.intent, sanitized_text, sanitized_context)
         payload = {
-            "model": self.settings.ollama_model,
+            "model": route.model,
             "stream": False,
             "messages": [
                 {"role": "user", "content": prompt},
@@ -85,7 +95,8 @@ class OllamaClient:
             parsed = self._parse_model_json(content)
             return LocalLlmAnalyzeResponse(
                 status="completed",
-                model=self.settings.ollama_model,
+                model=route.model,
+                modelRole=route.role,
                 intent=request.intent,
                 summary=parsed.get("summary") or content[:500] or "Analysis completed.",
                 detail=parsed.get("detail"),
@@ -95,7 +106,8 @@ class OllamaClient:
         except Exception as exc:  # noqa: BLE001
             return LocalLlmAnalyzeResponse(
                 status="failed",
-                model=self.settings.ollama_model,
+                model=route.model,
+                modelRole=route.role,
                 intent=request.intent,
                 summary="Local LLM analysis failed.",
                 detail=f"{type(exc).__name__}",

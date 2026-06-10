@@ -21,7 +21,13 @@ class Settings(BaseSettings):
     require_loopback: bool = Field(default=True)
 
     ollama_base_url: str = Field(default="http://127.0.0.1:11434")
+    # Backward-compatible single model setting. Prefer the intent-specific model settings below.
     ollama_model: str = Field(default="")
+    default_model: str = Field(default="")
+    code_model: str = Field(default="")
+    translation_model: str = Field(default="")
+    reasoning_model: str = Field(default="")
+    fallback_model: str = Field(default="")
     ollama_timeout_seconds: float = Field(default=30.0)
     max_input_chars: int = Field(default=6000)
     max_output_tokens: int = Field(default=900)
