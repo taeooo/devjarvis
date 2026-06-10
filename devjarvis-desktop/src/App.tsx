@@ -7,10 +7,12 @@ import { ContextStatusPanel } from './components/ContextStatusPanel';
 import { JarvisCore } from './components/JarvisCore';
 import { VoiceStatusPanel } from './components/VoiceStatusPanel';
 import { createProject, registerProjectManifest } from './api/backendClient';
+import { captureScreenFrame, isScreenCaptureSupported } from './utils/screenCapture';
 import type {
   CommandInput,
   ContextMode,
   ContextStatusItem,
+  ScreenContextSnapshot,
   SystemStatus,
   VoiceState,
 } from './types/jarvisCommand';
@@ -21,12 +23,21 @@ type SelectedProject = {
   name: string;
 };
 
+const initialScreenContext: ScreenContextSnapshot = {
+  state: isScreenCaptureSupported() ? 'ready' : 'unavailable',
+  width: null,
+  height: null,
+  capturedAt: null,
+  errorMessage: null,
+};
+
 function App() {
   const [selectedProject, setSelectedProject] = useState<SelectedProject | null>(null);
   const [registeredProject, setRegisteredProject] = useState<ProjectResponse | null>(null);
   const [latestSummary, setLatestSummary] = useState<ManifestRegisterResponse | null>(null);
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
   const [micAvailable, setMicAvailable] = useState<boolean | null>(null);
+  const [screenContext, setScreenContext] = useState<ScreenContextSnapshot>(initialScreenContext);
   const [isSelectingProject, setIsSelectingProject] = useState(false);
   const [isProcessingCommand, setIsProcessingCommand] = useState(false);
   const [lastCommand, setLastCommand] = useState<CommandInput | null>(null);
@@ -84,8 +95,8 @@ function App() {
     {
       key: 'screen',
       label: 'Screen',
-      value: 'Ready',
-      tone: 'ready',
+      value: formatScreenContextValue(screenContext),
+      tone: screenContext.state === 'captured' ? 'ready' : screenContext.state === 'capturing' ? 'active' : screenContext.state === 'error' || screenContext.state === 'unavailable' ? 'warning' : 'idle',
     },
     {
       key: 'project',
@@ -105,7 +116,7 @@ function App() {
       value: selectedProject ? 'Project' : 'None',
       tone: selectedProject ? 'ready' : 'idle',
     },
-  ]), [selectedProject, voiceState]);
+  ]), [screenContext, selectedProject, voiceState]);
 
   async function handleSelectProjectFolder() {
     setSystemMessage(null);
@@ -152,14 +163,27 @@ function App() {
     setVoiceState((current) => (current === 'unavailable' ? current : 'transcribing'));
 
     try {
-      if (selectedProject && command.contextMode === 'project') {
-        const summary = await refreshProjectManifest(selectedProject);
-        setSystemMessage(`Project context refreshed · ${summary.targetFileCount.toLocaleString()} files`);
-      } else if (!selectedProject && command.contextMode === 'project') {
-        setSystemMessage('Project context not selected.');
-      } else {
-        setSystemMessage('Command received locally.');
+      const messages: string[] = [];
+
+      if (command.contextMode === 'screen' || command.contextMode === 'auto') {
+        const snapshot = await refreshScreenContext();
+        messages.push(`Screen captured · ${snapshot.width}×${snapshot.height}`);
       }
+
+      if (command.contextMode === 'project' || command.contextMode === 'auto') {
+        if (selectedProject) {
+          const summary = await refreshProjectManifest(selectedProject);
+          messages.push(`Project refreshed · ${summary.targetFileCount.toLocaleString()} files`);
+        } else {
+          messages.push('Project context not selected');
+        }
+      }
+
+      if (messages.length === 0) {
+        messages.push('Command received locally');
+      }
+
+      setSystemMessage(messages.join(' · '));
     } catch (caught) {
       setErrorMessage(toErrorMessage(caught));
       setVoiceState((current) => (current === 'unavailable' ? current : 'error'));
@@ -169,6 +193,42 @@ function App() {
     }
 
     setVoiceState((current) => (current === 'unavailable' ? current : 'listening'));
+  }
+
+  async function refreshScreenContext(): Promise<{ width: number; height: number }> {
+    setScreenContext((current) => ({
+      ...current,
+      state: 'capturing',
+      errorMessage: null,
+    }));
+
+    try {
+      const captured = await captureScreenFrame();
+      const snapshot = {
+        width: captured.width,
+        height: captured.height,
+      };
+
+      setScreenContext({
+        state: 'captured',
+        width: captured.width,
+        height: captured.height,
+        capturedAt: captured.capturedAt,
+        errorMessage: null,
+      });
+
+      return snapshot;
+    } catch (caught) {
+      const message = toErrorMessage(caught);
+      setScreenContext({
+        state: isScreenCaptureSupported() ? 'error' : 'unavailable',
+        width: null,
+        height: null,
+        capturedAt: null,
+        errorMessage: message,
+      });
+      throw new Error(message);
+    }
   }
 
   async function refreshProjectManifest(projectContext: SelectedProject): Promise<ManifestRegisterResponse> {
@@ -204,6 +264,7 @@ function App() {
           <ContextStatusPanel
             items={contextItems}
             projectName={selectedProject?.name ?? null}
+            screenContext={screenContext}
             isSelectingProject={isSelectingProject}
             isProcessing={isProcessingCommand}
             latestSummary={latestSummary}
@@ -217,20 +278,46 @@ function App() {
 
 function inferContextMode(text: string): ContextMode {
   const normalized = text.toLocaleLowerCase();
+  const screenMatched = /(화면|스크린|캡처|캡쳐|번역|요약|이미지|window|screen)/i.test(normalized);
+  const projectMatched = /(프로젝트|소스|코드|파일|빌드|컴파일|에러|오류|로그|원인|스택트레이스|stack|trace)/i.test(normalized);
 
-  if (/(프로젝트|소스|코드|파일|빌드|컴파일|에러|오류|로그|원인|스택트레이스|stack|trace)/i.test(normalized)) {
-    return 'project';
+  if (screenMatched && projectMatched) {
+    return 'auto';
   }
 
-  if (/(화면|스크린|캡처|캡쳐|번역|요약|이미지|window|screen)/i.test(normalized)) {
+  if (screenMatched) {
     return 'screen';
+  }
+
+  if (projectMatched) {
+    return 'project';
   }
 
   return 'general';
 }
 
+function formatScreenContextValue(screenContext: ScreenContextSnapshot): string {
+  if (screenContext.state === 'capturing') {
+    return 'Capturing';
+  }
+
+  if (screenContext.state === 'captured') {
+    return 'Captured';
+  }
+
+  if (screenContext.state === 'unavailable') {
+    return 'Unavailable';
+  }
+
+  if (screenContext.state === 'error') {
+    return 'Failed';
+  }
+
+  return 'Ready';
+}
+
 function extractProjectName(path: string): string {
-  const normalized = path.replaceAll('\\', '/').replace(/\/+$|\s+$/g, '');
+  const normalized = path.replaceAll('\\', '/').replace(/\/+$/g, '').trim();
   const name = normalized.split('/').pop();
   return name && name.trim().length > 0 ? name : 'Local Project';
 }
