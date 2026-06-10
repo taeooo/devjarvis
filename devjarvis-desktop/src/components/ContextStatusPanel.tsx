@@ -1,10 +1,11 @@
-import type { ContextStatusItem } from '../types/jarvisCommand';
+import type { ContextStatusItem, ScreenContextSnapshot } from '../types/jarvisCommand';
 import type { ManifestRegisterResponse } from '../types/projectScanner';
 import { ProjectContextControl } from './ProjectContextControl';
 
 type ContextStatusPanelProps = {
   items: ContextStatusItem[];
   projectName: string | null;
+  screenContext: ScreenContextSnapshot;
   isSelectingProject: boolean;
   isProcessing: boolean;
   latestSummary: ManifestRegisterResponse | null;
@@ -14,6 +15,7 @@ type ContextStatusPanelProps = {
 export function ContextStatusPanel({
   items,
   projectName,
+  screenContext,
   isSelectingProject,
   isProcessing,
   latestSummary,
@@ -37,10 +39,36 @@ export function ContextStatusPanel({
         ))}
       </div>
 
-      <div className="snapshot-strip">
-        <span>Manifest</span>
-        <strong>{latestSummary ? `${latestSummary.targetFileCount.toLocaleString()} files` : 'On command'}</strong>
+      <div className="snapshot-stack">
+        <div className="snapshot-strip">
+          <span>Screen</span>
+          <strong>{formatScreenSnapshot(screenContext)}</strong>
+        </div>
+        <div className="snapshot-strip">
+          <span>Manifest</span>
+          <strong>{latestSummary ? `${latestSummary.targetFileCount.toLocaleString()} files` : 'On command'}</strong>
+        </div>
       </div>
     </aside>
   );
+}
+
+function formatScreenSnapshot(screenContext: ScreenContextSnapshot): string {
+  if (screenContext.state === 'capturing') {
+    return 'Capturing';
+  }
+
+  if (screenContext.state === 'captured' && screenContext.width && screenContext.height) {
+    return `${screenContext.width}×${screenContext.height}`;
+  }
+
+  if (screenContext.state === 'unavailable') {
+    return 'Unavailable';
+  }
+
+  if (screenContext.state === 'error') {
+    return 'Failed';
+  }
+
+  return 'On command';
 }

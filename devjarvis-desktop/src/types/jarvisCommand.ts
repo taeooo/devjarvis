@@ -21,3 +21,20 @@ export type ContextStatusItem = {
   value: string;
   tone: ContextStatusTone;
 };
+
+export type ScreenCaptureState = 'ready' | 'capturing' | 'captured' | 'unavailable' | 'error';
+
+export type ScreenCaptureResult = {
+  imageDataUrl: string;
+  width: number;
+  height: number;
+  capturedAt: string;
+};
+
+export type ScreenContextSnapshot = {
+  state: ScreenCaptureState;
+  width: number | null;
+  height: number | null;
+  capturedAt: string | null;
+  errorMessage: string | null;
+};
