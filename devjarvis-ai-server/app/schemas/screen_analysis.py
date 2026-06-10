@@ -41,7 +41,7 @@ class ScreenAnalysisRequest(BaseModel):
     @field_validator("ocr_text")
     @classmethod
     def sanitize_text(cls, value: str) -> str:
-        return " ".join(value.replace("\u0000", " ").split())
+        return "\n".join(line.strip() for line in value.replace("\u0000", " ").splitlines() if line.strip())
 
 
 class ScreenAnalysisResponse(BaseModel):
