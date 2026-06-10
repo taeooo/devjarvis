@@ -1,4 +1,4 @@
-﻿spring:
+spring:
   application:
     name: devjarvis-backend
 
@@ -12,6 +12,19 @@
     hibernate:
       ddl-auto: none
     open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  sql:
+    init:
+      mode: never
 
 server:
   port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
