@@ -7,7 +7,8 @@ import { CommandResultPanel } from './components/CommandResultPanel';
 import { ContextStatusPanel } from './components/ContextStatusPanel';
 import { JarvisCore } from './components/JarvisCore';
 import { VoiceStatusPanel } from './components/VoiceStatusPanel';
-import { analyzeScreen, createProject, extractScreenOcr, registerProjectManifest } from './api/backendClient';
+import { createProject, extractScreenOcr, registerProjectManifest } from './api/backendClient';
+import { analyzeWithLocalAgent, getLocalAgentHealth, localAgentBaseUrl } from './api/localAgentClient';
 import { notifyCommandResult } from './utils/nativeWindow';
 import { createClientId, createCommandInput, createCommandPlan } from './utils/commandRouter';
 import { captureScreenFrame, isScreenCaptureSupported } from './utils/screenCapture';
@@ -16,6 +17,8 @@ import type {
   CommandPipelineStage,
   CommandResult,
   ContextStatusItem,
+  LocalAgentHealthSnapshot,
+  LocalLlmAnalyzeResponse,
   ScreenAnalysisResponse,
   ScreenCaptureResult,
   ScreenContextSnapshot,
@@ -64,6 +67,17 @@ const initialScreenContext: ScreenContextSnapshot = {
   analysisErrorMessage: null,
 };
 
+const initialLocalAgentHealth: LocalAgentHealthSnapshot = {
+  state: 'checking',
+  provider: null,
+  model: null,
+  baseUrl: localAgentBaseUrl,
+  modelRouting: {},
+  warning: null,
+  checkedAt: null,
+  errorMessage: null,
+};
+
 function App() {
   const [selectedProject, setSelectedProject] = useState<SelectedProject | null>(null);
   const [registeredProject, setRegisteredProject] = useState<ProjectResponse | null>(null);
@@ -71,6 +85,7 @@ function App() {
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
   const [micAvailable, setMicAvailable] = useState<boolean | null>(null);
   const [screenContext, setScreenContext] = useState<ScreenContextSnapshot>(initialScreenContext);
+  const [localAgentHealth, setLocalAgentHealth] = useState<LocalAgentHealthSnapshot>(initialLocalAgentHealth);
   const [isSelectingProject, setIsSelectingProject] = useState(false);
   const [isProcessingCommand, setIsProcessingCommand] = useState(false);
   const [lastCommand, setLastCommand] = useState<CommandInput | null>(null);
@@ -109,6 +124,62 @@ function App() {
 
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkLocalAgent() {
+      setLocalAgentHealth((current) => ({
+        ...current,
+        state: 'checking',
+        errorMessage: null,
+      }));
+
+      try {
+        const response = await getLocalAgentHealth();
+        if (cancelled) {
+          return;
+        }
+
+        setLocalAgentHealth({
+          state: response.available ? 'ready' : 'unavailable',
+          provider: response.provider,
+          model: response.model,
+          baseUrl: response.baseUrl,
+          modelRouting: response.modelRouting ?? {},
+          warning: response.warning,
+          checkedAt: new Date().toISOString(),
+          errorMessage: response.available ? null : response.warning ?? 'Local LLM is unavailable.',
+        });
+      } catch (caught) {
+        if (cancelled) {
+          return;
+        }
+
+        setLocalAgentHealth({
+          state: 'unavailable',
+          provider: null,
+          model: null,
+          baseUrl: localAgentBaseUrl,
+          modelRouting: {},
+          warning: null,
+          checkedAt: new Date().toISOString(),
+          errorMessage: toErrorMessage(caught),
+        });
+      }
+    }
+
+    void checkLocalAgent();
+
+    const intervalId = window.setInterval(() => {
+      void checkLocalAgent();
+    }, 30000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
     };
   }, []);
 
@@ -288,6 +359,10 @@ function App() {
       metadata.analysisTitle = analysisResult.title;
       metadata.analysisPreview = analysisResult.preview;
       metadata.analysisActionItems = analysisResult.actionItems;
+      metadata.analysisSource = analysisResult.provider.startsWith('local-agent') ? 'local_agent' : 'remote_backend';
+      metadata.localAgentState = localAgentHealth.state;
+      metadata.localAgentProvider = localAgentHealth.provider;
+      metadata.localAgentModel = localAgentHealth.model;
       stage = 'analysis_ready';
     }
 
@@ -436,17 +511,7 @@ function App() {
     }));
 
     try {
-      const response = await analyzeScreen({
-        commandId: command.id,
-        intent: command.intent,
-        contextMode: command.contextMode,
-        ocrProvider: ocrResult.provider,
-        ocrText: ocrResult.text,
-        ocrTextFound: ocrResult.textFound,
-        width: captured.width,
-        height: captured.height,
-        capturedAt: captured.capturedAt,
-      });
+      const response = await requestLocalScreenAnalysis(command, captured, ocrResult);
 
       setScreenContext((current) => ({
         ...current,
@@ -466,6 +531,42 @@ function App() {
       }));
       throw new Error(message);
     }
+  }
+
+  async function requestLocalScreenAnalysis(
+    command: CommandInput,
+    captured: ScreenCaptureResult,
+    ocrResult: ScreenOcrResponse,
+  ): Promise<ScreenAnalysisResponse> {
+    if (localAgentHealth.state !== 'ready') {
+      throw new Error('Local Agent is unavailable. Start devjarvis-local-agent and retry.');
+    }
+
+    if (!ocrResult.textFound || ocrResult.text.trim().length === 0) {
+      return {
+        requestId: command.id,
+        provider: 'local-agent',
+        status: 'no_text',
+        intent: command.intent,
+        title: 'No readable text',
+        summary: 'No readable text was extracted from the selected screen.',
+        detail: '',
+        preview: 'No readable text was extracted.',
+        actionItems: ['Try selecting a clearer screen or window.'],
+        textUsedLength: 0,
+        warnings: ['ocr_text_empty'],
+        analyzedAt: new Date().toISOString(),
+      };
+    }
+
+    const localResponse = await analyzeWithLocalAgent({
+      commandId: command.id,
+      intent: command.intent,
+      text: ocrResult.text,
+      context: buildLocalAnalysisContext(command, captured, ocrResult),
+    });
+
+    return mapLocalAgentAnalysisResponse(command, ocrResult, localResponse);
   }
 
   async function refreshProjectManifest(projectContext: SelectedProject): Promise<ManifestRegisterResponse> {
@@ -508,10 +609,8 @@ function App() {
           <ContextStatusPanel
             items={contextItems}
             projectName={selectedProject?.name ?? null}
-            screenContext={screenContext}
             isSelectingProject={isSelectingProject}
             isProcessing={isProcessingCommand}
-            latestSummary={latestSummary}
             onSelectProject={handleSelectProjectFolder}
           />
           <CommandResultPanel results={commandResults} />
@@ -521,6 +620,63 @@ function App() {
   );
 }
 
+
+
+function buildLocalAnalysisContext(command: CommandInput, captured: ScreenCaptureResult, ocrResult: ScreenOcrResponse): string {
+  return [
+    `source=${command.source}`,
+    `contextMode=${command.contextMode}`,
+    `screen=${captured.width}x${captured.height}`,
+    `ocrProvider=${ocrResult.provider}`,
+    `ocrTextLength=${ocrResult.textLength}`,
+  ].join('\n');
+}
+
+function mapLocalAgentAnalysisResponse(
+  command: CommandInput,
+  ocrResult: ScreenOcrResponse,
+  response: LocalLlmAnalyzeResponse,
+): ScreenAnalysisResponse {
+  const title = response.status === 'completed' ? formatLocalAgentTitle(command.intent) : 'Analysis failed';
+  const summary = response.summary || 'Local Agent returned an empty summary.';
+
+  return {
+    requestId: command.id,
+    provider: 'local-agent',
+    status: response.status,
+    intent: command.intent,
+    title,
+    summary,
+    detail: response.detail ?? summary,
+    preview: summarizePreview(summary, response.detail),
+    actionItems: response.actionItems ?? [],
+    textUsedLength: ocrResult.textLength,
+    warnings: response.warnings ?? [],
+    analyzedAt: new Date().toISOString(),
+  };
+}
+
+function formatLocalAgentTitle(intent: CommandInput['intent']): string {
+  switch (intent) {
+    case 'screen_translate':
+      return 'Translation ready';
+    case 'screen_summary':
+      return 'Summary ready';
+    case 'screen_error_analysis':
+      return 'Diagnosis ready';
+    case 'project_diagnosis':
+      return 'Project diagnosis ready';
+    case 'log_analysis':
+      return 'Log analysis ready';
+    case 'general_chat':
+      return 'Response ready';
+  }
+}
+
+function summarizePreview(summary: string, detail: string | null): string {
+  const text = (detail && detail.trim().length > summary.trim().length ? detail : summary).trim();
+  return text.length > 240 ? `${text.slice(0, 237)}...` : text;
+}
 
 function resolveScreenTargetBeforeCapture(command: CommandInput, current: ScreenTargetSnapshot): ScreenTargetSnapshot {
   if (command.source === 'voice') {

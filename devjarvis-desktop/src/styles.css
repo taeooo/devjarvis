@@ -25,7 +25,7 @@ body {
   margin: 0;
   min-height: 100vh;
   min-height: 100dvh;
-  overflow-x: hidden;
+  overflow: hidden;
   background:
     radial-gradient(circle at 50% -8%, rgba(0, 212, 255, 0.28), transparent 25rem),
     radial-gradient(circle at 12% 76%, rgba(14, 116, 255, 0.2), transparent 25rem),
@@ -230,6 +230,7 @@ input:disabled {
 .side-stack {
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .jarvis-core-panel {
@@ -470,11 +471,13 @@ input:disabled {
 }
 
 .side-stack .context-panel {
-  flex: 1;
+  flex: 0 0 auto;
 }
 
 .side-stack .result-panel {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .glass-card,
@@ -566,11 +569,11 @@ input:disabled {
 .context-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
+  gap: 0.75rem;
 }
 
 .project-context-control {
-  min-height: 4.4rem;
+  min-height: 3.9rem;
   border: 1px solid rgba(103, 232, 249, 0.18);
   border-radius: 1.1rem;
   padding: 0.8rem;
@@ -593,7 +596,7 @@ input:disabled {
 }
 
 .context-tile {
-  min-height: 5.5rem;
+  min-height: 4.15rem;
   border: 1px solid rgba(103, 232, 249, 0.16);
   border-radius: 1.1rem;
   padding: 0.78rem;
@@ -602,7 +605,7 @@ input:disabled {
 
 .context-tile strong {
   display: block;
-  margin-top: 0.55rem;
+  margin-top: 0.38rem;
 }
 
 .tone-ready {
@@ -740,7 +743,7 @@ input:disabled {
 .result-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.8rem;
+  gap: 0.65rem;
 }
 
 .panel-heading,
@@ -771,7 +774,9 @@ input:disabled {
 
 .result-list {
   display: grid;
-  gap: 0.65rem;
+  gap: 0.55rem;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .empty-result,
@@ -790,8 +795,8 @@ input:disabled {
 
 .result-card {
   display: grid;
-  gap: 0.4rem;
-  padding: 0.85rem;
+  gap: 0.34rem;
+  padding: 0.72rem;
 }
 
 .result-card strong {
@@ -801,10 +806,14 @@ input:disabled {
 }
 
 .result-card p {
+  display: -webkit-box;
   margin: 0;
+  overflow: hidden;
   color: rgba(224, 242, 254, 0.68);
-  font-size: 0.78rem;
-  line-height: 1.45;
+  font-size: 0.76rem;
+  line-height: 1.38;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .result-meta-row {
@@ -877,8 +886,8 @@ input:disabled {
   margin: 0;
   padding-left: 16px;
   color: rgba(198, 232, 255, 0.72);
-  font-size: 0.72rem;
-  line-height: 1.45;
+  font-size: 0.7rem;
+  line-height: 1.35;
 }
 
 .result-action-list li + li {

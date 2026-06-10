@@ -44,3 +44,6 @@ logs/
 *.tar
 *.gz
 *.7z
+
+# Local Agent is a Python/FastAPI module. Prevent accidental npm artifacts.
+devjarvis-local-agent/package-lock.json

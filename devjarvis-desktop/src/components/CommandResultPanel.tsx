@@ -1,7 +1,6 @@
 import type { CommandResult } from '../types/jarvisCommand';
-import { formatIntent } from '../utils/commandRouter';
 
-const MAX_RENDERED_RESULTS = 5;
+const MAX_RENDERED_RESULTS = 3;
 
 type CommandResultPanelProps = {
   results: CommandResult[];
@@ -12,12 +11,12 @@ export function CommandResultPanel({ results }: CommandResultPanelProps) {
     <aside className="result-panel" aria-label="Command results">
       <div className="panel-heading">
         <span>Results</span>
-        <strong>{results.length > 0 ? 'Stored' : 'Ready'}</strong>
+        <strong>{results.length > 0 ? 'Ready' : 'Idle'}</strong>
       </div>
 
       <div className="result-list">
         {results.length === 0 ? (
-          <div className="empty-result">No results yet</div>
+          <div className="empty-result">Waiting for command</div>
         ) : (
           results.slice(0, MAX_RENDERED_RESULTS).map((result) => (
             <article className={`result-card result-${result.status}`} key={result.id}>
@@ -27,44 +26,16 @@ export function CommandResultPanel({ results }: CommandResultPanelProps) {
                   {formatResultTime(result.completedAt ?? result.createdAt)}
                 </time>
               </div>
-              <strong>{result.title}</strong>
-              <div className="result-meta-row">
-                <span>{formatIntent(result.intent)}</span>
-                <span>{formatContextMode(result.contextMode)}</span>
-              </div>
-              <p>{result.summary}</p>
-              {result.metadata?.screenTarget && (
-                <div className="result-meta-row">
-                  <span>Target {result.metadata.screenTarget}</span>
-                  <span>{result.metadata.screenTargetPolicy ?? 'screen'}</span>
-                </div>
-              )}
-              {result.metadata?.ocrPreview && (
-                <div className="result-ocr-preview">{result.metadata.ocrPreview}</div>
-              )}
-              {result.metadata?.analysisPreview && (
-                <div className="result-analysis-preview">{result.metadata.analysisPreview}</div>
-              )}
-              {result.metadata?.analysisProvider && (
-                <div className="result-meta-row">
-                  <span>Analysis {result.metadata.analysisProvider}</span>
-                  <span>{result.metadata.analysisStatus ?? 'ready'}</span>
-                </div>
-              )}
+              <strong>{result.metadata?.analysisTitle ?? result.title}</strong>
+              <p>{result.metadata?.analysisPreview ?? result.summary}</p>
               {result.metadata?.analysisActionItems && result.metadata.analysisActionItems.length > 0 && (
                 <ul className="result-action-list">
-                  {result.metadata.analysisActionItems.slice(0, 3).map((item) => (
+                  {result.metadata.analysisActionItems.slice(0, 2).map((item) => (
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
               )}
-              {result.metadata?.ocrProvider && (
-                <div className="result-meta-row">
-                  <span>OCR {result.metadata.ocrProvider}</span>
-                  <span>{result.metadata.ocrTextFound ? `${result.metadata.ocrTextLength ?? 0} chars` : 'No text'}</span>
-                </div>
-              )}
-              {result.nextStep && <small>{result.nextStep}</small>}
+              {result.nextStep && result.status === 'failed' && <small>{result.nextStep}</small>}
             </article>
           ))
         )}
@@ -83,22 +54,6 @@ function formatResultStatus(status: CommandResult['status']): string {
   }
 
   return 'Completed';
-}
-
-function formatContextMode(contextMode: CommandResult['contextMode']): string {
-  if (contextMode === 'auto') {
-    return 'Screen + Project';
-  }
-
-  if (contextMode === 'screen') {
-    return 'Screen';
-  }
-
-  if (contextMode === 'project') {
-    return 'Project';
-  }
-
-  return 'General';
 }
 
 function formatResultTime(value: string): string {
