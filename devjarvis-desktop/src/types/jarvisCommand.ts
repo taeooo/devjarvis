@@ -2,9 +2,9 @@ export type VoiceState = 'unavailable' | 'idle' | 'listening' | 'transcribing' |
 
 export type SystemStatus = 'Listening' | 'Mic unavailable' | 'Idle' | 'Processing';
 
-export type ContextMode = 'screen' | 'project' | 'general' | 'auto';
-
 export type CommandSource = 'voice' | 'text';
+
+export type ContextMode = 'screen' | 'project' | 'general' | 'auto';
 
 export type CommandIntent =
   | 'screen_translate'
@@ -17,6 +17,7 @@ export type CommandIntent =
 export type CommandPipelineStage =
   | 'received'
   | 'capturing_screen'
+  | 'extracting_ocr'
   | 'refreshing_manifest'
   | 'analysis_ready'
   | 'completed'
@@ -35,11 +36,18 @@ export type CommandResultStatus = 'processing' | 'completed' | 'failed';
 
 export type CommandResultDisplayMode = 'notify' | 'open_app' | 'overlay';
 
+export type OcrExtractionState = 'not_requested' | 'uploading' | 'extracting' | 'completed' | 'failed';
+
 export type CommandResultMetadata = {
   screenSize?: string;
   manifestTargetFileCount?: number;
   manifestExcludedFileCount?: number;
   projectContext?: 'selected' | 'not_selected';
+  ocrProvider?: string;
+  ocrStatus?: string;
+  ocrTextLength?: number;
+  ocrTextFound?: boolean;
+  ocrPreview?: string;
 };
 
 export type CommandResult = {
@@ -73,8 +81,10 @@ export type ScreenCaptureState = 'ready' | 'capturing' | 'captured' | 'unavailab
 
 export type ScreenCaptureResult = {
   imageDataUrl: string;
+  mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
   width: number;
   height: number;
+  byteSize: number;
   capturedAt: string;
 };
 
@@ -85,4 +95,38 @@ export type ScreenContextSnapshot = {
   capturedAt: string | null;
   errorMessage: string | null;
   lastIntent: CommandIntent | null;
+  ocrState: OcrExtractionState;
+  ocrProvider: string | null;
+  ocrTextLength: number | null;
+  ocrErrorMessage: string | null;
+};
+
+export type ScreenOcrRequest = {
+  commandId: string;
+  intent: CommandIntent;
+  contextMode: ContextMode;
+  image: {
+    dataUrl: string;
+    mimeType: ScreenCaptureResult['mimeType'];
+    width: number;
+    height: number;
+    byteSize: number;
+    capturedAt: string;
+  };
+};
+
+export type ScreenOcrResponse = {
+  requestId: string;
+  provider: string;
+  status: string;
+  text: string;
+  textFound: boolean;
+  textLength: number;
+  preview: string;
+  width: number;
+  height: number;
+  mimeType: string;
+  byteSize: number;
+  warnings: string[];
+  extractedAt: string;
 };

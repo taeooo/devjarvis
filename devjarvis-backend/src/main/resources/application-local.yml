@@ -50,4 +50,17 @@ devjarvis:
     enabled: true
     write-requests-per-minute: 60
     manifest-requests-per-minute: 10
+    screen-ocr-requests-per-minute: 12
     max-tracked-clients: 10000
+
+  screen:
+    ocr:
+      enabled: true
+      max-image-bytes: 1500000
+      max-width: 4096
+      max-height: 4096
+      preview-characters: 700
+      allowed-mime-types:
+        - image/jpeg
+        - image/png
+        - image/webp

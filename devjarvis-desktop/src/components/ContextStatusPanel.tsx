@@ -49,6 +49,10 @@ export function ContextStatusPanel({
           <strong>{formatScreenIntent(screenContext)}</strong>
         </div>
         <div className="snapshot-strip">
+          <span>OCR</span>
+          <strong>{formatOcrSnapshot(screenContext)}</strong>
+        </div>
+        <div className="snapshot-strip">
           <span>Manifest</span>
           <strong>{latestSummary ? `${latestSummary.targetFileCount.toLocaleString()} files` : 'On command'}</strong>
         </div>
@@ -96,4 +100,22 @@ function formatScreenIntent(screenContext: ScreenContextSnapshot): string {
     case 'general_chat':
       return 'General';
   }
+}
+
+
+function formatOcrSnapshot(screenContext: ScreenContextSnapshot): string {
+  if (screenContext.ocrState === 'extracting' || screenContext.ocrState === 'uploading') {
+    return 'Extracting';
+  }
+
+  if (screenContext.ocrState === 'completed') {
+    const count = screenContext.ocrTextLength ?? 0;
+    return count > 0 ? `${count.toLocaleString()} chars` : screenContext.ocrProvider ?? 'Ready';
+  }
+
+  if (screenContext.ocrState === 'failed') {
+    return 'Failed';
+  }
+
+  return 'On command';
 }

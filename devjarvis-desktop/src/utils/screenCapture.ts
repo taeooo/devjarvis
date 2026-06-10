@@ -1,6 +1,11 @@
 import type { ScreenCaptureResult } from '../types/jarvisCommand';
 
 const VIDEO_READY_TIMEOUT_MS = 5_000;
+const OCR_IMAGE_MIME: ScreenCaptureResult['mimeType'] = 'image/jpeg';
+const MAX_CAPTURE_WIDTH = 1600;
+const MAX_CAPTURE_HEIGHT = 1200;
+const MAX_CAPTURE_BYTES = 1_500_000;
+const JPEG_QUALITIES = [0.82, 0.74, 0.66, 0.58];
 
 export function isScreenCaptureSupported(): boolean {
   return Boolean(navigator.mediaDevices?.getDisplayMedia);
@@ -25,13 +30,14 @@ export async function captureScreenFrame(): Promise<ScreenCaptureResult> {
     await waitForVideoFrame(video);
     await video.play().catch(() => undefined);
 
-    const width = video.videoWidth;
-    const height = video.videoHeight;
+    const sourceWidth = video.videoWidth;
+    const sourceHeight = video.videoHeight;
 
-    if (width <= 0 || height <= 0) {
+    if (sourceWidth <= 0 || sourceHeight <= 0) {
       throw new Error('Screen capture frame is empty.');
     }
 
+    const { width, height } = fitWithinBounds(sourceWidth, sourceHeight, MAX_CAPTURE_WIDTH, MAX_CAPTURE_HEIGHT);
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
@@ -42,11 +48,14 @@ export async function captureScreenFrame(): Promise<ScreenCaptureResult> {
     }
 
     context.drawImage(video, 0, 0, width, height);
+    const { dataUrl, byteSize } = createBoundedDataUrl(canvas);
 
     return {
-      imageDataUrl: canvas.toDataURL('image/png'),
+      imageDataUrl: dataUrl,
+      mimeType: OCR_IMAGE_MIME,
       width,
       height,
+      byteSize,
       capturedAt: new Date().toISOString(),
     };
   } finally {
@@ -89,4 +98,35 @@ function waitForVideoFrame(video: HTMLVideoElement): Promise<void> {
     video.addEventListener('canplay', handleReady);
     video.addEventListener('error', handleError);
   });
+}
+
+function fitWithinBounds(width: number, height: number, maxWidth: number, maxHeight: number): { width: number; height: number } {
+  const scale = Math.min(1, maxWidth / width, maxHeight / height);
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+function createBoundedDataUrl(canvas: HTMLCanvasElement): { dataUrl: string; byteSize: number } {
+  for (const quality of JPEG_QUALITIES) {
+    const dataUrl = canvas.toDataURL(OCR_IMAGE_MIME, quality);
+    const byteSize = estimateDataUrlByteSize(dataUrl);
+    if (byteSize > 0 && byteSize <= MAX_CAPTURE_BYTES) {
+      return { dataUrl, byteSize };
+    }
+  }
+
+  throw new Error('Screen capture is too large for secure OCR transfer.');
+}
+
+function estimateDataUrlByteSize(dataUrl: string): number {
+  const commaIndex = dataUrl.indexOf(',');
+  if (commaIndex < 0) {
+    return 0;
+  }
+
+  const base64 = dataUrl.slice(commaIndex + 1);
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  return Math.floor((base64.length * 3) / 4) - padding;
 }

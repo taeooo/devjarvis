@@ -845,3 +845,17 @@ input:disabled {
 .result-failed .result-card-topline span {
   color: #fed7aa;
 }
+
+.result-ocr-preview {
+  max-height: 5.8rem;
+  overflow: hidden;
+  border: 1px solid rgba(103, 232, 249, 0.12);
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.65rem;
+  background: rgba(15, 23, 42, 0.48);
+  color: rgba(224, 242, 254, 0.7);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}

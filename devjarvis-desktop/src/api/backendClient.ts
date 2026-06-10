@@ -4,6 +4,7 @@ import type {
   ManifestRegisterResponse,
   ProjectResponse,
 } from '../types/projectScanner';
+import type { ScreenOcrRequest, ScreenOcrResponse } from '../types/jarvisCommand';
 import { getOrCreateClientSessionId } from '../utils/clientSession';
 
 const DEFAULT_BACKEND_BASE_URL = 'http://localhost:8080';
@@ -43,5 +44,12 @@ export async function registerProjectManifest(projectId: number, files: Manifest
   return requestJson<ManifestRegisterResponse>(`/api/projects/${projectId}/files/manifest`, {
     method: 'POST',
     body: JSON.stringify({ files }),
+  });
+}
+
+export async function extractScreenOcr(input: ScreenOcrRequest): Promise<ScreenOcrResponse> {
+  return requestJson<ScreenOcrResponse>('/api/screen/ocr', {
+    method: 'POST',
+    body: JSON.stringify(input),
   });
 }
