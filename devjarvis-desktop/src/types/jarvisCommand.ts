@@ -7,10 +7,27 @@ export type ContextMode = 'screen' | 'project' | 'general' | 'auto';
 export type CommandSource = 'voice' | 'text';
 
 export type CommandInput = {
+  id: string;
   source: CommandSource;
   text: string;
   createdAt: string;
   contextMode: ContextMode;
+};
+
+export type CommandResultStatus = 'processing' | 'completed' | 'failed';
+
+export type CommandResultDisplayMode = 'notify' | 'open_app' | 'overlay';
+
+export type CommandResult = {
+  id: string;
+  commandId: string;
+  title: string;
+  summary: string;
+  detail?: string;
+  status: CommandResultStatus;
+  createdAt: string;
+  completedAt?: string;
+  displayMode: CommandResultDisplayMode;
 };
 
 export type ContextStatusTone = 'ready' | 'idle' | 'warning' | 'active';

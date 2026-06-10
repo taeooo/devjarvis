@@ -3,13 +3,16 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { AppShell } from './components/AppShell';
 import { CommandInput as CommandInputBar } from './components/CommandInput';
+import { CommandResultPanel } from './components/CommandResultPanel';
 import { ContextStatusPanel } from './components/ContextStatusPanel';
 import { JarvisCore } from './components/JarvisCore';
 import { VoiceStatusPanel } from './components/VoiceStatusPanel';
 import { createProject, registerProjectManifest } from './api/backendClient';
+import { notifyCommandResult } from './utils/nativeWindow';
 import { captureScreenFrame, isScreenCaptureSupported } from './utils/screenCapture';
 import type {
   CommandInput,
+  CommandResult,
   ContextMode,
   ContextStatusItem,
   ScreenContextSnapshot,
@@ -22,6 +25,8 @@ type SelectedProject = {
   rootPath: string;
   name: string;
 };
+
+const MAX_RESULT_HISTORY = 8;
 
 const initialScreenContext: ScreenContextSnapshot = {
   state: isScreenCaptureSupported() ? 'ready' : 'unavailable',
@@ -41,6 +46,7 @@ function App() {
   const [isSelectingProject, setIsSelectingProject] = useState(false);
   const [isProcessingCommand, setIsProcessingCommand] = useState(false);
   const [lastCommand, setLastCommand] = useState<CommandInput | null>(null);
+  const [commandResults, setCommandResults] = useState<CommandResult[]>([]);
   const [systemMessage, setSystemMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -150,13 +156,25 @@ function App() {
 
   async function handleTextCommandSubmit(text: string) {
     const command: CommandInput = {
+      id: createClientId(),
       source: 'text',
       text,
       createdAt: new Date().toISOString(),
       contextMode: inferContextMode(text),
     };
 
+    const startedResult: CommandResult = {
+      id: createClientId(),
+      commandId: command.id,
+      title: 'Command processing',
+      summary: summarizeCommandContext(command.contextMode),
+      status: 'processing',
+      createdAt: new Date().toISOString(),
+      displayMode: 'notify',
+    };
+
     setLastCommand(command);
+    upsertCommandResult(startedResult);
     setSystemMessage(null);
     setErrorMessage(null);
     setIsProcessingCommand(true);
@@ -183,10 +201,35 @@ function App() {
         messages.push('Command received locally');
       }
 
-      setSystemMessage(messages.join(' · '));
+      const completedResult: CommandResult = {
+        ...startedResult,
+        title: inferResultTitle(command),
+        summary: messages.join(' · '),
+        detail: command.text,
+        status: 'completed',
+        completedAt: new Date().toISOString(),
+        displayMode: command.contextMode === 'general' ? 'notify' : 'open_app',
+      };
+
+      upsertCommandResult(completedResult);
+      setSystemMessage(completedResult.summary);
+      void notifyCommandResult(completedResult);
     } catch (caught) {
-      setErrorMessage(toErrorMessage(caught));
+      const message = toErrorMessage(caught);
+      const failedResult: CommandResult = {
+        ...startedResult,
+        title: 'Command failed',
+        summary: message,
+        detail: command.text,
+        status: 'failed',
+        completedAt: new Date().toISOString(),
+        displayMode: 'open_app',
+      };
+
+      upsertCommandResult(failedResult);
+      setErrorMessage(message);
       setVoiceState((current) => (current === 'unavailable' ? current : 'error'));
+      void notifyCommandResult(failedResult);
       return;
     } finally {
       setIsProcessingCommand(false);
@@ -245,6 +288,13 @@ function App() {
     return summary;
   }
 
+  function upsertCommandResult(result: CommandResult) {
+    setCommandResults((current) => {
+      const next = [result, ...current.filter((item) => item.commandId !== result.commandId)];
+      return next.slice(0, MAX_RESULT_HISTORY);
+    });
+  }
+
   return (
     <AppShell status={systemStatus}>
       <section className="command-shell-layout">
@@ -270,6 +320,7 @@ function App() {
             latestSummary={latestSummary}
             onSelectProject={handleSelectProjectFolder}
           />
+          <CommandResultPanel results={commandResults} />
         </div>
       </section>
     </AppShell>
@@ -316,10 +367,50 @@ function formatScreenContextValue(screenContext: ScreenContextSnapshot): string 
   return 'Ready';
 }
 
+function inferResultTitle(command: CommandInput): string {
+  if (command.contextMode === 'screen') {
+    return 'Screen context ready';
+  }
+
+  if (command.contextMode === 'project') {
+    return 'Project context ready';
+  }
+
+  if (command.contextMode === 'auto') {
+    return 'Context bundle ready';
+  }
+
+  return 'Command received';
+}
+
+function summarizeCommandContext(contextMode: ContextMode): string {
+  if (contextMode === 'screen') {
+    return 'Preparing screen context';
+  }
+
+  if (contextMode === 'project') {
+    return 'Refreshing project manifest';
+  }
+
+  if (contextMode === 'auto') {
+    return 'Preparing screen and project context';
+  }
+
+  return 'Routing command locally';
+}
+
 function extractProjectName(path: string): string {
   const normalized = path.replaceAll('\\', '/').replace(/\/+$/g, '').trim();
   const name = normalized.split('/').pop();
   return name && name.trim().length > 0 ? name : 'Local Project';
+}
+
+function createClientId(): string {
+  if (crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function toErrorMessage(caught: unknown): string {
