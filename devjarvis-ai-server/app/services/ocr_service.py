@@ -4,6 +4,7 @@ from time import perf_counter
 from app.core.config import get_settings
 from app.ocr.placeholder_provider import PlaceholderOcrProvider
 from app.ocr.provider import OcrProvider
+from app.ocr.rapidocr_provider import RapidOcrProvider
 from app.schemas.ocr import OcrExtractRequest, OcrExtractResponse
 
 _SAFE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -29,9 +30,11 @@ def _create_provider(provider_name: str) -> OcrProvider:
     if normalized == "placeholder":
         return PlaceholderOcrProvider()
 
-    # Keep the provider boundary stable without adding heavy OCR dependencies in the foundation patch.
-    # Supported future provider names are reserved here so configuration can be introduced safely.
-    if normalized in {"rapidocr", "paddleocr", "easyocr"}:
+    if normalized == "rapidocr":
+        return RapidOcrProvider()
+
+    # Keep future provider names reserved so configuration can be introduced safely.
+    if normalized in {"paddleocr", "easyocr"}:
         return PlaceholderOcrProvider()
 
     raise OcrValidationError("Unsupported OCR provider.")
