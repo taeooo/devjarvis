@@ -20,6 +20,7 @@ import type {
   ScreenCaptureResult,
   ScreenContextSnapshot,
   ScreenOcrResponse,
+  ScreenTargetSnapshot,
   SystemStatus,
   VoiceState,
 } from './types/jarvisCommand';
@@ -38,8 +39,17 @@ type PipelineExecutionSummary = {
 
 const MAX_RESULT_HISTORY = 8;
 
+const initialScreenTarget: ScreenTargetSnapshot = {
+  kind: 'not_selected',
+  label: 'Not selected',
+  policy: 'manual_picker_required',
+  source: null,
+  updatedAt: null,
+};
+
 const initialScreenContext: ScreenContextSnapshot = {
   state: isScreenCaptureSupported() ? 'ready' : 'unavailable',
+  target: initialScreenTarget,
   width: null,
   height: null,
   capturedAt: null,
@@ -257,6 +267,9 @@ function App() {
       const screenSize = `${captured.width}×${captured.height}`;
       messages.push(`Screen captured · ${screenSize}`);
       metadata.screenSize = screenSize;
+      const resolvedTarget = resolveScreenTargetAfterCapture(plan.command);
+      metadata.screenTarget = screenContextLabel(resolvedTarget);
+      metadata.screenTargetPolicy = resolvedTarget.policy;
 
       updateProcessingStage(plan.command.id, 'extracting_ocr', 'Extracting screen text');
       const ocrResult = await requestScreenOcr(plan.command, captured);
@@ -318,12 +331,15 @@ function App() {
       state: 'capturing',
       errorMessage: null,
       lastIntent: command.intent,
+      target: resolveScreenTargetBeforeCapture(command, current.target),
     }));
 
     try {
       const captured = await captureScreenFrame();
+      const capturedTarget = resolveScreenTargetAfterCapture(command);
       setScreenContext({
         state: 'captured',
+        target: capturedTarget,
         width: captured.width,
         height: captured.height,
         capturedAt: captured.capturedAt,
@@ -343,6 +359,7 @@ function App() {
       const message = toErrorMessage(caught);
       setScreenContext({
         state: isScreenCaptureSupported() ? 'error' : 'unavailable',
+        target: resolveScreenTargetBeforeCapture(command, screenContext.target),
         width: null,
         height: null,
         capturedAt: null,
@@ -502,6 +519,50 @@ function App() {
       </section>
     </AppShell>
   );
+}
+
+
+function resolveScreenTargetBeforeCapture(command: CommandInput, current: ScreenTargetSnapshot): ScreenTargetSnapshot {
+  if (command.source === 'voice') {
+    return {
+      kind: 'foreground_window',
+      label: 'Foreground window',
+      policy: 'voice_foreground_first',
+      source: command.source,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  if (current.kind !== 'not_selected' && current.kind !== 'manual_picker') {
+    return {
+      ...current,
+      policy: 'text_last_target_first',
+      source: command.source,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  return {
+    kind: 'manual_picker',
+    label: 'Select screen/window',
+    policy: 'manual_picker_required',
+    source: command.source,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function resolveScreenTargetAfterCapture(command: CommandInput): ScreenTargetSnapshot {
+  return {
+    kind: 'user_selected',
+    label: command.source === 'voice' ? 'Selected after voice command' : 'Selected for text command',
+    policy: command.source === 'voice' ? 'voice_foreground_first' : 'text_last_target_first',
+    source: command.source,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function screenContextLabel(target: ScreenTargetSnapshot): string {
+  return target.label;
 }
 
 function formatAnalysisPipelineMessage(result: ScreenAnalysisResponse): string {

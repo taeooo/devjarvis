@@ -4,6 +4,7 @@ import type {
   CommandResultDisplayMode,
   ContextMode,
   CommandSource,
+  ScreenTargetPolicy,
 } from '../types/jarvisCommand';
 
 export type CommandExecutionPlan = {
@@ -15,6 +16,7 @@ export type CommandExecutionPlan = {
   readySummary: string;
   nextStep: string;
   displayMode: CommandResultDisplayMode;
+  screenTargetPolicy: ScreenTargetPolicy;
 };
 
 export function createCommandInput(text: string, source: CommandSource): CommandInput {
@@ -45,7 +47,33 @@ export function createCommandPlan(command: CommandInput): CommandExecutionPlan {
     readySummary: resolveReadySummary(command.contextMode),
     nextStep: resolveNextStep(command.intent, command.contextMode),
     displayMode: command.contextMode === 'general' ? 'notify' : 'open_app',
+    screenTargetPolicy: resolveScreenTargetPolicy(command),
   };
+}
+
+
+export function resolveScreenTargetPolicy(command: CommandInput): ScreenTargetPolicy {
+  const needsScreen = command.contextMode === 'screen' || command.contextMode === 'auto';
+  if (!needsScreen) {
+    return 'manual_picker_required';
+  }
+
+  if (command.source === 'voice') {
+    return 'voice_foreground_first';
+  }
+
+  return 'text_last_target_first';
+}
+
+export function formatScreenTargetPolicy(policy: ScreenTargetPolicy): string {
+  switch (policy) {
+    case 'voice_foreground_first':
+      return 'Voice foreground';
+    case 'text_last_target_first':
+      return 'Last target';
+    case 'manual_picker_required':
+      return 'Manual picker';
+  }
 }
 
 export function inferContextMode(text: string, intent: CommandIntent = inferCommandIntent(text)): ContextMode {

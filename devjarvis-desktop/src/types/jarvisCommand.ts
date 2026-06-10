@@ -4,6 +4,20 @@ export type SystemStatus = 'Listening' | 'Mic unavailable' | 'Idle' | 'Processin
 
 export type CommandSource = 'voice' | 'text';
 
+export type ScreenTargetKind =
+  | 'not_selected'
+  | 'manual_picker'
+  | 'user_selected'
+  | 'last_captured'
+  | 'last_active_window'
+  | 'foreground_window'
+  | 'cursor_monitor';
+
+export type ScreenTargetPolicy =
+  | 'voice_foreground_first'
+  | 'text_last_target_first'
+  | 'manual_picker_required';
+
 export type ContextMode = 'screen' | 'project' | 'general' | 'auto';
 
 export type CommandIntent =
@@ -56,6 +70,8 @@ export type CommandResultMetadata = {
   analysisTitle?: string;
   analysisPreview?: string;
   analysisActionItems?: string[];
+  screenTarget?: string;
+  screenTargetPolicy?: ScreenTargetPolicy;
 };
 
 export type CommandResult = {
@@ -96,8 +112,17 @@ export type ScreenCaptureResult = {
   capturedAt: string;
 };
 
+export type ScreenTargetSnapshot = {
+  kind: ScreenTargetKind;
+  label: string;
+  policy: ScreenTargetPolicy;
+  source: CommandSource | null;
+  updatedAt: string | null;
+};
+
 export type ScreenContextSnapshot = {
   state: ScreenCaptureState;
+  target: ScreenTargetSnapshot;
   width: number | null;
   height: number | null;
   capturedAt: string | null;
