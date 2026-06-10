@@ -13,10 +13,13 @@
     "windows": [
       {
         "title": "DevJarvis",
-        "width": 1200,
-        "height": 820,
+        "width": 1600,
+        "height": 960,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "minWidth": 1180,
+        "minHeight": 760,
+        "maximized": true
       }
     ],
     "security": {
