@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.health import router as health_router
 from app.api.internal_indexing import router as internal_indexing_router
 from app.api.internal_ocr import router as internal_ocr_router
+from app.api.internal_screen_analysis import router as internal_screen_analysis_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 
@@ -31,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(internal_indexing_router)
     app.include_router(internal_ocr_router)
+    app.include_router(internal_screen_analysis_router)
 
     return app
 

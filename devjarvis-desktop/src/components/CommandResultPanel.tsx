@@ -36,6 +36,22 @@ export function CommandResultPanel({ results }: CommandResultPanelProps) {
               {result.metadata?.ocrPreview && (
                 <div className="result-ocr-preview">{result.metadata.ocrPreview}</div>
               )}
+              {result.metadata?.analysisPreview && (
+                <div className="result-analysis-preview">{result.metadata.analysisPreview}</div>
+              )}
+              {result.metadata?.analysisProvider && (
+                <div className="result-meta-row">
+                  <span>Analysis {result.metadata.analysisProvider}</span>
+                  <span>{result.metadata.analysisStatus ?? 'ready'}</span>
+                </div>
+              )}
+              {result.metadata?.analysisActionItems && result.metadata.analysisActionItems.length > 0 && (
+                <ul className="result-action-list">
+                  {result.metadata.analysisActionItems.slice(0, 3).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              )}
               {result.metadata?.ocrProvider && (
                 <div className="result-meta-row">
                   <span>OCR {result.metadata.ocrProvider}</span>

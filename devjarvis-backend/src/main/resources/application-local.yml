@@ -51,6 +51,7 @@ devjarvis:
     write-requests-per-minute: 60
     manifest-requests-per-minute: 10
     screen-ocr-requests-per-minute: 12
+    screen-analysis-requests-per-minute: 12
     max-tracked-clients: 10000
 
   screen:
@@ -64,3 +65,11 @@ devjarvis:
         - image/jpeg
         - image/png
         - image/webp
+    analysis:
+      enabled: true
+      max-ocr-text-characters: 12000
+      preview-characters: 900
+      allowed-intents:
+        - screen_translate
+        - screen_summary
+        - screen_error_analysis
