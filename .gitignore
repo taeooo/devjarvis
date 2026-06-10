@@ -1,0 +1,46 @@
+﻿# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# Node / Tauri
+node_modules/
+dist/
+build/
+src-tauri/target/
+
+# Java / Gradle
+.gradle/
+**/build/
+**/target/
+
+# Python
+.venv/
+.venv-wsl/
+__pycache__/
+*.pyc
+
+# Env / Secrets
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+*secret*.yaml
+*secret*.yml
+application-secret.yml
+
+# Logs
+logs/
+*.log
+
+# Archives
+*.zip
+*.tar
+*.gz
+*.7z
