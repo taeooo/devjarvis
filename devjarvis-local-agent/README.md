@@ -62,3 +62,26 @@ DEVJARVIS_LOCAL_AGENT_FALLBACK_MODEL=qwen3:8b
 ```
 
 `DEVJARVIS_LOCAL_AGENT_OLLAMA_MODEL` remains supported for backward-compatible single-model mode.
+
+## Local OCR
+
+Local Agent also provides a local-only OCR endpoint so selected screen images do not need to move to the NAS OCR pipeline.
+
+```bash
+curl http://127.0.0.1:17997/internal/local-ocr/health
+```
+
+Provider selection:
+
+```env
+DEVJARVIS_LOCAL_AGENT_OCR_PROVIDER=placeholder
+# DEVJARVIS_LOCAL_AGENT_OCR_PROVIDER=rapidocr
+```
+
+Security policy:
+
+- accepts loopback requests only
+- validates data URL / MIME / byte size / magic bytes
+- rejects unsupported image types
+- does not save screen images to disk
+- does not fallback to remote OCR automatically

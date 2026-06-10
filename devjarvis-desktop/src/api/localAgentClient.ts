@@ -2,6 +2,8 @@ import type {
   LocalAgentHealthResponse,
   LocalLlmAnalyzeRequest,
   LocalLlmAnalyzeResponse,
+  ScreenOcrRequest,
+  ScreenOcrResponse,
 } from '../types/jarvisCommand';
 import type { ApiResponse } from '../types/projectScanner';
 
@@ -44,6 +46,17 @@ export async function getLocalAgentHealth(): Promise<LocalAgentHealthResponse> {
   return requestLocalAgentJson<LocalAgentHealthResponse>('/internal/local-llm/health', {
     method: 'GET',
   });
+}
+
+export async function extractScreenOcrWithLocalAgent(input: ScreenOcrRequest): Promise<ScreenOcrResponse> {
+  return requestLocalAgentJson<ScreenOcrResponse>('/internal/local-ocr/extract', {
+    method: 'POST',
+    body: JSON.stringify({
+      commandId: input.commandId,
+      intent: input.intent,
+      image: input.image,
+    }),
+  }, 30000);
 }
 
 export async function analyzeWithLocalAgent(input: LocalLlmAnalyzeRequest): Promise<LocalLlmAnalyzeResponse> {

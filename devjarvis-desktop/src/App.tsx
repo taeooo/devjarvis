@@ -7,8 +7,8 @@ import { CommandResultPanel } from './components/CommandResultPanel';
 import { ContextStatusPanel } from './components/ContextStatusPanel';
 import { JarvisCore } from './components/JarvisCore';
 import { VoiceStatusPanel } from './components/VoiceStatusPanel';
-import { createProject, extractScreenOcr, registerProjectManifest } from './api/backendClient';
-import { analyzeWithLocalAgent, getLocalAgentHealth, localAgentBaseUrl } from './api/localAgentClient';
+import { createProject, registerProjectManifest } from './api/backendClient';
+import { analyzeWithLocalAgent, extractScreenOcrWithLocalAgent, getLocalAgentHealth, localAgentBaseUrl } from './api/localAgentClient';
 import { notifyCommandResult } from './utils/nativeWindow';
 import { createClientId, createCommandInput, createCommandPlan } from './utils/commandRouter';
 import { captureScreenFrame, isScreenCaptureSupported } from './utils/screenCapture';
@@ -462,7 +462,7 @@ function App() {
     }));
 
     try {
-      const response = await extractScreenOcr({
+      const response = await extractScreenOcrWithLocalAgent({
         commandId: command.id,
         intent: command.intent,
         contextMode: command.contextMode,
@@ -637,12 +637,12 @@ function mapLocalAgentAnalysisResponse(
   ocrResult: ScreenOcrResponse,
   response: LocalLlmAnalyzeResponse,
 ): ScreenAnalysisResponse {
-  const title = response.status === 'completed' ? formatLocalAgentTitle(command.intent) : 'Analysis failed';
+  const title = response.status === 'completed' ? formatLocalAgentTitle(command.intent) : 'Local analysis failed';
   const summary = response.summary || 'Local Agent returned an empty summary.';
 
   return {
     requestId: command.id,
-    provider: 'local-agent',
+    provider: response.modelRole ? `local-agent:${response.modelRole}` : 'local-agent',
     status: response.status,
     intent: command.intent,
     title,
