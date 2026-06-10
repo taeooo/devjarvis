@@ -21,11 +21,17 @@ class Settings(BaseSettings):
 
     backend_base_url: str = Field(default="http://localhost:8080")
     ollama_base_url: str = Field(default="http://localhost:11434")
+    ollama_model: str = Field(default="")
 
     ocr_provider: str = Field(default="placeholder")
     ocr_max_image_bytes: int = Field(default=1_500_000)
     ocr_max_width: int = Field(default=4096)
     ocr_max_height: int = Field(default=4096)
+
+    screen_analysis_provider: str = Field(default="placeholder")
+    screen_analysis_max_input_chars: int = Field(default=6000)
+    screen_analysis_timeout_seconds: float = Field(default=20.0)
+    screen_analysis_temperature: float = Field(default=0.1)
 
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: [
