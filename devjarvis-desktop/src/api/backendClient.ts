@@ -23,7 +23,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
   const payload = (await response.json()) as ApiResponse<T>;
   if (!response.ok || !payload.success || payload.data === null) {
-    throw new Error(payload.error?.message ?? `Backend request failed. status=${response.status}`);
+    throw new Error(payload.error?.message ?? 'Server request failed.');
   }
 
   return payload.data;

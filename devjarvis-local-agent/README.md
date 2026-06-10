@@ -29,6 +29,31 @@ curl http://127.0.0.1:17997/health
 curl http://127.0.0.1:17997/internal/local-llm/health
 ```
 
+
+## Local OCR
+
+Desktop 화면 명령은 화면 이미지를 NAS로 보내지 않고 Local Agent OCR을 먼저 호출합니다. Local OCR 실패 시 remote OCR로 자동 fallback하지 않습니다.
+
+```bash
+curl http://127.0.0.1:17997/internal/local-ocr/health
+```
+
+기본 provider는 `rapidocr`입니다. 파이프라인만 검증해야 할 때는 `.env`에서 placeholder로 낮출 수 있습니다.
+
+```env
+DEVJARVIS_LOCAL_AGENT_LOCAL_OCR_PROVIDER=rapidocr
+DEVJARVIS_LOCAL_AGENT_LOCAL_OCR_MAX_IMAGE_BYTES=1500000
+DEVJARVIS_LOCAL_AGENT_LOCAL_OCR_MAX_WIDTH=4096
+DEVJARVIS_LOCAL_AGENT_LOCAL_OCR_MAX_HEIGHT=4096
+```
+
+## Ollama model pull
+
+```bash
+ollama pull qwen3:8b
+ollama pull qwen2.5-coder:7b
+```
+
 ## 테스트
 
 ```bash
