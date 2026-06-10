@@ -20,8 +20,11 @@ py -3.11 -m venv .venv
 source .venv/Scripts/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+cp .env.example .env
 uvicorn app.main:app --reload --host 127.0.0.1 --port 17997
 ```
+
+`.env.example`에는 로컬 실행용 기본값만 포함되어 있습니다. 실제 secret, token, password, key 파일은 넣지 않습니다.
 
 ## 확인
 
@@ -78,12 +81,23 @@ DEVJARVIS_LOCAL_AGENT_FALLBACK_MODEL=qwen3:8b
 
 `DEVJARVIS_LOCAL_AGENT_OLLAMA_MODEL` remains supported for backward-compatible single-model mode.
 
-## Ollama model pull
+## Ollama 준비
+
+Ollama는 Local Agent와 같은 PC에서 loopback 주소로만 실행합니다.
+
+```bash
+ollama serve
+```
+
+다른 터미널에서 권장 모델을 내려받습니다.
 
 ```bash
 ollama pull qwen3:8b
 ollama pull qwen2.5-coder:7b
+ollama list
 ```
+
+Desktop 화면에는 모델명과 provider를 표시하지 않습니다. 모델명은 `.env`와 문서에서만 관리합니다.
 
 ## 테스트
 
