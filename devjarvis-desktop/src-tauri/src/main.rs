@@ -3,10 +3,14 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager, WebviewWindow, WindowEvent};
 use walkdir::{DirEntry, WalkDir};
 
 const MAX_MANIFEST_FILES: usize = 10_000;
 const MAX_INDEXABLE_FILE_BYTES: u64 = 5 * 1024 * 1024;
+const MAIN_WINDOW_LABEL: &str = "main";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,9 +48,8 @@ struct ProjectScanResult {
 
 #[tauri::command]
 fn scan_project_manifest(root_path: String) -> Result<ProjectScanResult, String> {
-    let root = fs::canonicalize(PathBuf::from(root_path)).map_err(|error| {
-        format!("프로젝트 폴더를 확인할 수 없습니다: {}", error)
-    })?;
+    let root = fs::canonicalize(PathBuf::from(root_path))
+        .map_err(|error| format!("프로젝트 폴더를 확인할 수 없습니다: {}", error))?;
 
     if !root.is_dir() {
         return Err("프로젝트 폴더만 선택할 수 있습니다.".to_string());
@@ -93,6 +96,20 @@ fn scan_project_manifest(root_path: String) -> Result<ProjectScanResult, String>
         files,
         summary,
     })
+}
+
+#[tauri::command]
+fn show_main_window(app: AppHandle) -> Result<(), String> {
+    show_main_window_by_app(&app).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn hide_main_window(app: AppHandle) -> Result<(), String> {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return Ok(());
+    };
+
+    hide_webview_window_to_tray(&window).map_err(|error| error.to_string())
 }
 
 fn build_manifest_file(root: &Path, path: &Path) -> Result<Option<ManifestFile>, String> {
@@ -374,6 +391,78 @@ fn sanitize_alias(value: &str) -> String {
     }
 }
 
+fn configure_tray(app: &mut tauri::App) -> tauri::Result<()> {
+    let open_item = MenuItem::with_id(app, "open", "DevJarvis 열기", true, None::<&str>)?;
+    let hide_item = MenuItem::with_id(app, "hide", "트레이로 숨기기", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open_item, &hide_item, &quit_item])?;
+
+    let mut tray_builder = TrayIconBuilder::new()
+        .tooltip("DevJarvis is running")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "open" => {
+                if let Err(error) = show_main_window_by_app(app) {
+                    eprintln!("failed to show DevJarvis window: {}", error);
+                }
+            }
+            "hide" => {
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                    if let Err(error) = hide_webview_window_to_tray(&window) {
+                        eprintln!("failed to hide DevJarvis window: {}", error);
+                    }
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                let app = tray.app_handle();
+                if let Err(error) = show_main_window_by_app(app) {
+                    eprintln!("failed to show DevJarvis window from tray: {}", error);
+                }
+            }
+        });
+
+    if let Some(icon) = app.default_window_icon() {
+        tray_builder = tray_builder.icon(icon.clone());
+    }
+
+    tray_builder.build(app)?;
+    Ok(())
+}
+
+fn show_main_window_by_app(app: &AppHandle) -> tauri::Result<()> {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return Ok(());
+    };
+
+    window.set_skip_taskbar(false)?;
+    window.show()?;
+    window.unminimize()?;
+    window.set_focus()?;
+    Ok(())
+}
+
+fn hide_webview_window_to_tray(window: &WebviewWindow) -> tauri::Result<()> {
+    window.set_skip_taskbar(true)?;
+    window.hide()?;
+    Ok(())
+}
+
+fn hide_window_to_tray(window: &tauri::Window) -> tauri::Result<()> {
+    window.set_skip_taskbar(true)?;
+    window.hide()?;
+    Ok(())
+}
+
 trait BlankCheck {
     fn is_blank(&self) -> bool;
 }
@@ -387,7 +476,27 @@ impl BlankCheck for str {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![scan_project_manifest])
+        .setup(|app| {
+            configure_tray(app)?;
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() != MAIN_WINDOW_LABEL {
+                return;
+            }
+
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                if let Err(error) = hide_window_to_tray(window) {
+                    eprintln!("failed to hide DevJarvis window to tray: {}", error);
+                }
+            }
+        })
+        .invoke_handler(tauri::generate_handler![
+            scan_project_manifest,
+            show_main_window,
+            hide_main_window
+        ])
         .run(tauri::generate_context!())
         .expect("failed to run DevJarvis desktop app");
 }
