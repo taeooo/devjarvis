@@ -42,7 +42,7 @@ import type {
   SystemStatus,
   VoiceState,
 } from './types/jarvisCommand';
-import type { ManifestFile, ManifestRegisterResponse, ProjectResponse, ProjectScanResult } from './types/projectScanner';
+import type { ManifestRegisterResponse, ProjectResponse, ProjectScanResult } from './types/projectScanner';
 
 type SelectedProject = {
   rootPath: string;
@@ -65,9 +65,6 @@ type LocalAssistantReadiness = {
 };
 
 const MAX_RESULT_HISTORY = 8;
-const LOCAL_AGENT_CONTEXT_BUDGET = 3600;
-const PROJECT_RELATIVE_PATH_SAMPLE_LIMIT = 64;
-const PROJECT_ENTRYPOINT_SAMPLE_LIMIT = 24;
 
 const initialScreenTarget: ScreenTargetSnapshot = {
   kind: 'not_selected',
@@ -447,15 +444,10 @@ function App() {
       if (selectedProject) {
         const summary = await refreshProjectManifest(selectedProject);
         projectScan = summary.scan;
-        const targetFileCount = summary.registration?.targetFileCount ?? summary.scan.summary.targetFileCount;
-        const excludedFileCount = summary.registration?.excludedFileCount ?? summary.scan.summary.excludedFileCount;
-        messages.push(summary.registration
-          ? `Project scanned · ${targetFileCount.toLocaleString()} files · backend synced`
-          : `Project scanned · ${targetFileCount.toLocaleString()} files · backend sync skipped`);
-        metadata.manifestTargetFileCount = targetFileCount;
-        metadata.manifestExcludedFileCount = excludedFileCount;
+        messages.push(`Project refreshed · ${summary.registration.targetFileCount.toLocaleString()} files`);
+        metadata.manifestTargetFileCount = summary.registration.targetFileCount;
+        metadata.manifestExcludedFileCount = summary.registration.excludedFileCount;
         metadata.projectContext = 'selected';
-        metadata.projectSyncStatus = summary.syncStatus;
       } else {
         messages.push('Project context not selected');
         metadata.projectContext = 'not_selected';
@@ -699,27 +691,19 @@ function App() {
     return mapLocalAgentAnalysisResponse(command, ocrResult, localResponse);
   }
 
-  async function refreshProjectManifest(projectContext: SelectedProject): Promise<{ registration: ManifestRegisterResponse | null; scan: ProjectScanResult; syncStatus: 'synced' | 'skipped' }> {
+  async function refreshProjectManifest(projectContext: SelectedProject): Promise<{ registration: ManifestRegisterResponse; scan: ProjectScanResult }> {
     const scanResult = await invoke<ProjectScanResult>('scan_project_manifest', { rootPath: projectContext.rootPath });
+    const project = registeredProject ?? await createProject({
+      name: scanResult.rootName || projectContext.name,
+      rootPathAlias: scanResult.rootPathAlias,
+      description: 'Desktop command context source.',
+    });
 
-    try {
-      const project = registeredProject ?? await createProject({
-        name: scanResult.rootName || projectContext.name,
-        rootPathAlias: scanResult.rootPathAlias,
-        description: 'Desktop command context source.',
-      });
-
-      const summary = await registerProjectManifest(project.id, scanResult.files);
-      setRegisteredProject(project);
-      setLatestSummary(summary);
-      setLatestProjectScan(scanResult);
-      return { registration: summary, scan: scanResult, syncStatus: 'synced' };
-    } catch {
-      setRegisteredProject(null);
-      setLatestSummary(null);
-      setLatestProjectScan(scanResult);
-      return { registration: null, scan: scanResult, syncStatus: 'skipped' };
-    }
+    const summary = await registerProjectManifest(project.id, scanResult.files);
+    setRegisteredProject(project);
+    setLatestSummary(summary);
+    setLatestProjectScan(scanResult);
+    return { registration: summary, scan: scanResult };
   }
 
   function resetStaleContextForCommand(command: CommandInput) {
@@ -733,16 +717,7 @@ function App() {
   }
 
   async function requestProjectAnalysis(command: CommandInput, scanResult: ProjectScanResult): Promise<ScreenAnalysisResponse> {
-    const manifestReport = buildProjectManifestAnalysis(scanResult);
-    const response = await analyzeWithLocalAgent({
-      commandId: command.id,
-      intent: command.intent,
-      text: command.text,
-      context: manifestReport.localAgentContext,
-    });
-
-    const mapped = mapLocalAgentAnalysisResponse(command, { textLength: manifestReport.localAgentContext.length } as ScreenOcrResponse, response);
-    return mergeProjectManifestAnalysis(mapped, manifestReport);
+    return buildLocalProjectAnalysisResponse(command, scanResult);
   }
 
   async function requestTextAnalysis(command: CommandInput): Promise<ScreenAnalysisResponse> {
@@ -855,314 +830,213 @@ function buildFailureNextStep(message: string): string {
   return 'Check permission or command context';
 }
 
-type ProjectManifestAnalysis = {
-  summary: string;
-  detail: string;
-  actionItems: string[];
-  localAgentContext: string;
-};
 
-function buildProjectManifestAnalysis(scanResult: ProjectScanResult): ProjectManifestAnalysis {
+function buildLocalProjectAnalysisResponse(command: CommandInput, scanResult: ProjectScanResult): ScreenAnalysisResponse {
   const activeFiles = scanResult.files.filter((file) => !file.excluded);
-  const languageCounts = countBy(activeFiles, (file) => file.language || 'unknown');
-  const extensionCounts = countBy(activeFiles, (file) => file.extension || 'none');
-  const topLevelCounts = countBy(activeFiles, (file) => getTopLevelSegment(file.relativePath));
-  const entrypointCandidates = findEntrypointCandidates(activeFiles);
-  const configCandidates = activeFiles.filter((file) => isConfigLikeFile(file)).slice(0, PROJECT_ENTRYPOINT_SAMPLE_LIMIT);
-  const sampleFiles = pickRepresentativeFiles(activeFiles, PROJECT_RELATIVE_PATH_SAMPLE_LIMIT);
-
-  const moduleLines = formatCountMap(topLevelCounts, 12)
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => `- ${line}`);
-  const languageLines = formatCountMap(languageCounts, 12)
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => `- ${line}`);
-  const extensionLines = formatCountMap(extensionCounts, 12)
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => `- ${line}`);
-  const entrypointLines = entrypointCandidates.map((file) => `- ${formatManifestFileLine(file)}`);
-  const configLines = configCandidates.map((file) => `- ${formatManifestFileLine(file)}`);
-  const sampleLines = sampleFiles.map((file) => `- ${formatManifestFileLine(file)}`);
-
+  const languageCounts = createCountMap(activeFiles.map((file) => file.language || 'unknown'));
+  const extensionCounts = createCountMap(activeFiles.map((file) => file.extension || 'none'));
+  const topLevelCounts = createCountMap(activeFiles.map((file) => firstPathSegment(file.relativePath)));
+  const entrypoints = selectProjectFiles(activeFiles, isEntrypointCandidate, 8);
+  const configs = selectProjectFiles(activeFiles, isConfigCandidate, 10);
+  const representativePaths = selectRepresentativePaths(activeFiles, 14);
+  const primaryLanguages = formatTopCounts(languageCounts, 4);
+  const primaryAreas = formatTopCounts(topLevelCounts, 5);
   const summary = [
-    `Project scan: ${activeFiles.length.toLocaleString()} active files`,
-    `${scanResult.summary.excludedFileCount.toLocaleString()} excluded`,
-    `${scanResult.summary.sensitiveFileCount.toLocaleString()} sensitive candidates excluded`,
-  ].join(' · ');
+    `${scanResult.rootName} 프로젝트는 ${activeFiles.length.toLocaleString()}개 분석 대상 파일을 가진 로컬 프로젝트입니다.`,
+    primaryLanguages ? `주요 언어/파일 유형은 ${primaryLanguages} 입니다.` : null,
+    primaryAreas ? `상위 디렉터리 기준으로는 ${primaryAreas} 영역이 두드러집니다.` : null,
+    configs.length > 0 ? '설정 파일과 엔트리포인트 후보를 먼저 확인하는 흐름이 적합합니다.' : '설정 파일 후보가 적어 구조 확인이 먼저 필요합니다.',
+  ].filter(Boolean).join(' ');
 
-  const actionItems = [
-    'Open the entrypoint candidates first.',
-    'Review module boundaries from the top-level path distribution.',
-    'Run Desktop, Local Agent, and Backend tests separately before changing runtime flow.',
-  ];
+  const detail = [
+    '[로컬 manifest 근거]',
+    `- 요청 파일 수: ${scanResult.summary.requestedFileCount.toLocaleString()}`,
+    `- 분석 대상 파일 수: ${scanResult.summary.targetFileCount.toLocaleString()}`,
+    `- 제외 파일 수: ${scanResult.summary.excludedFileCount.toLocaleString()}`,
+    `- 민감 파일 제외 수: ${scanResult.summary.sensitiveFileCount.toLocaleString()}`,
+    '',
+    '[상위 디렉터리 분포]',
+    formatCountMapForDetail(topLevelCounts),
+    '',
+    '[언어/파일 유형 분포]',
+    formatCountMapForDetail(languageCounts),
+    '',
+    '[확장자 분포]',
+    formatCountMapForDetail(extensionCounts),
+    '',
+    '[엔트리포인트 후보]',
+    formatPathList(entrypoints),
+    '',
+    '[설정 파일 후보]',
+    formatPathList(configs),
+    '',
+    '[대표 상대경로 샘플]',
+    formatPathList(representativePaths),
+  ].join('\n');
 
-  const detail = compactLines([
-    '[Scope]',
-    `rootName=${scanResult.rootName}`,
-    `activeFiles=${activeFiles.length}`,
-    `excludedFiles=${scanResult.summary.excludedFileCount}`,
-    `sensitiveFileCandidates=${scanResult.summary.sensitiveFileCount}`,
-    '',
-    '[Top-level path distribution]',
-    ...moduleLines,
-    '',
-    '[Language distribution]',
-    ...languageLines,
-    '',
-    '[Extension distribution]',
-    ...extensionLines,
-    '',
-    '[Entrypoint candidates]',
-    ...(entrypointLines.length > 0 ? entrypointLines : ['- none detected from manifest metadata']),
-    '',
-    '[Config candidates]',
-    ...(configLines.length > 0 ? configLines : ['- none detected from manifest metadata']),
-    '',
-    '[Representative relative paths]',
-    ...sampleLines,
-    '',
-    '[Limits]',
-    '- File contents were not read.',
-    '- Absolute paths and root aliases were not included.',
-  ]);
+  return {
+    requestId: command.id,
+    provider: 'local-agent',
+    status: 'completed',
+    intent: command.intent,
+    title: '프로젝트 분석 완료',
+    summary,
+    detail,
+    preview: summary.length > 240 ? `${summary.slice(0, 237)}...` : summary,
+    actionItems: buildProjectAnalysisActionItems(configs, entrypoints, scanResult.summary.sensitiveFileCount),
+    textUsedLength: 0,
+    warnings: ['local_manifest_only'],
+    analyzedAt: new Date().toISOString(),
+  };
+}
 
-  const context = limitTextByLines(compactLines([
-    '[project_manifest_scope]',
-    `rootName=${scanResult.rootName}`,
+function createCountMap(values: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    incrementCount(counts, value || 'unknown');
+  }
+  return counts;
+}
+
+function firstPathSegment(relativePath: string): string {
+  const [segment] = relativePath.split('/').filter(Boolean);
+  return segment || '(root)';
+}
+
+function formatTopCounts(counts: Map<string, number>, limit: number): string {
+  return Array.from(counts.entries())
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, limit)
+    .map(([key, count]) => `${key} ${count}`)
+    .join(', ');
+}
+
+function formatCountMapForDetail(counts: Map<string, number>, limit = 12): string {
+  const rows = Array.from(counts.entries())
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, limit)
+    .map(([key, count]) => `- ${key}: ${count.toLocaleString()}`);
+  return rows.length > 0 ? rows.join('\n') : '- 후보 없음';
+}
+
+function selectProjectFiles(
+  files: ProjectScanResult['files'],
+  predicate: (file: ProjectScanResult['files'][number]) => boolean,
+  limit: number,
+): string[] {
+  return files
+    .filter(predicate)
+    .map((file) => file.relativePath)
+    .slice(0, limit);
+}
+
+function selectRepresentativePaths(files: ProjectScanResult['files'], limit: number): string[] {
+  const selected: string[] = [];
+  const seenTopLevels = new Set<string>();
+
+  for (const file of files) {
+    const topLevel = firstPathSegment(file.relativePath);
+    if (seenTopLevels.has(topLevel)) continue;
+    seenTopLevels.add(topLevel);
+    selected.push(file.relativePath);
+    if (selected.length >= limit) break;
+  }
+
+  if (selected.length < limit) {
+    for (const file of files) {
+      if (selected.includes(file.relativePath)) continue;
+      selected.push(file.relativePath);
+      if (selected.length >= limit) break;
+    }
+  }
+
+  return selected;
+}
+
+function isEntrypointCandidate(file: ProjectScanResult['files'][number]): boolean {
+  const normalized = file.relativePath.toLowerCase();
+  const name = file.fileName.toLowerCase();
+  return (
+    name === 'main.tsx'
+    || name === 'main.ts'
+    || name === 'main.rs'
+    || name === 'main.py'
+    || name === 'app.tsx'
+    || name === 'app.ts'
+    || name === 'main.java'
+    || normalized.endsWith('/application.java')
+    || normalized.endsWith('/main.java')
+  );
+}
+
+function isConfigCandidate(file: ProjectScanResult['files'][number]): boolean {
+  const name = file.fileName.toLowerCase();
+  return (
+    name === 'package.json'
+    || name === 'vite.config.ts'
+    || name === 'tauri.conf.json'
+    || name === 'cargo.toml'
+    || name === 'build.gradle'
+    || name === 'build.gradle.kts'
+    || name === 'settings.gradle'
+    || name === 'requirements.txt'
+    || name === 'pyproject.toml'
+    || name === 'application.yml'
+    || name === 'application.yaml'
+  );
+}
+
+function formatPathList(paths: string[]): string {
+  return paths.length > 0 ? paths.map((path) => `- ${path}`).join('\n') : '- 후보 없음';
+}
+
+function buildProjectAnalysisActionItems(configs: string[], entrypoints: string[], sensitiveFileCount: number): string[] {
+  const items = ['상세 확인 시 설정 파일 후보와 엔트리포인트 후보를 먼저 비교하세요.'];
+  if (configs.length === 0) {
+    items.push('설정 파일 후보가 적으므로 빌드/실행 기준 파일을 먼저 찾아야 합니다.');
+  }
+  if (entrypoints.length === 0) {
+    items.push('엔트리포인트 후보가 적으므로 실행 진입점을 수동으로 확인해야 합니다.');
+  }
+  if (sensitiveFileCount > 0) {
+    items.push('민감 파일은 분석 대상에서 제외되었으므로 원문을 공유하지 말고 로컬에서만 확인하세요.');
+  }
+  return items.slice(0, 4);
+}
+
+function summarizeProjectManifestForLocalAnalysis(scanResult: ProjectScanResult): string {
+  const activeFiles = scanResult.files.filter((file) => !file.excluded);
+  const languageCounts = new Map<string, number>();
+  const extensionCounts = new Map<string, number>();
+  const sampleFiles = activeFiles.slice(0, 80).map((file) => `${file.relativePath}\t${file.language}\t${file.extension}`);
+
+  for (const file of activeFiles) {
+    incrementCount(languageCounts, file.language || 'unknown');
+    incrementCount(extensionCounts, file.extension || 'none');
+  }
+
+  return [
+    `projectRootName=${scanResult.rootName}`,
     `requestedFileCount=${scanResult.summary.requestedFileCount}`,
     `targetFileCount=${scanResult.summary.targetFileCount}`,
     `excludedFileCount=${scanResult.summary.excludedFileCount}`,
     `sensitiveFileCount=${scanResult.summary.sensitiveFileCount}`,
-    '',
-    '[top_level_paths]',
-    ...moduleLines,
-    '',
-    '[languages]',
-    ...languageLines,
-    '',
-    '[extensions]',
-    ...extensionLines,
-    '',
-    '[entrypoint_candidates]',
-    ...(entrypointLines.length > 0 ? entrypointLines : ['- none']),
-    '',
-    '[config_candidates]',
-    ...(configLines.length > 0 ? configLines : ['- none']),
-    '',
-    '[relative_path_samples]',
-    ...sampleLines,
-    '',
-    '[analysis_contract]',
-    'Use manifest metadata only. Do not infer file contents. Do not request remote fallback.',
-  ]), LOCAL_AGENT_CONTEXT_BUDGET);
-
-  return {
-    summary,
-    detail,
-    actionItems,
-    localAgentContext: context,
-  };
-}
-
-function mergeProjectManifestAnalysis(response: ScreenAnalysisResponse, manifestReport: ProjectManifestAnalysis): ScreenAnalysisResponse {
-  const normalizedSummary = normalizeAnalysisText(response.summary);
-  const normalizedDetail = normalizeAnalysisText(response.detail ?? '');
-  const localDetail = normalizedDetail && normalizedDetail !== normalizedSummary ? normalizedDetail : null;
-  const detail = compactLines([
-    localDetail,
-    localDetail ? '' : null,
-    '[Local manifest evidence]',
-    manifestReport.detail,
-  ]);
-
-  return {
-    ...response,
-    summary: normalizedSummary || manifestReport.summary,
-    detail,
-    preview: summarizePreview(normalizedSummary || manifestReport.summary, detail),
-    actionItems: response.actionItems.length > 0 ? response.actionItems : manifestReport.actionItems,
-  };
-}
-
-function countBy(files: ManifestFile[], keySelector: (file: ManifestFile) => string): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const file of files) {
-    incrementCount(counts, keySelector(file));
-  }
-  return counts;
+    `[languageCounts]\n${formatCountMap(languageCounts)}`,
+    `[extensionCounts]\n${formatCountMap(extensionCounts)}`,
+    `[sampleRelativePaths]\n${sampleFiles.join('\n')}`,
+  ].join('\n');
 }
 
 function incrementCount(counts: Map<string, number>, key: string) {
   counts.set(key, (counts.get(key) ?? 0) + 1);
 }
 
-function formatCountMap(counts: Map<string, number>, limit = 20): string {
+function formatCountMap(counts: Map<string, number>): string {
   return Array.from(counts.entries())
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-    .slice(0, limit)
+    .slice(0, 20)
     .map(([key, count]) => `${key}=${count}`)
     .join('\n');
-}
-
-function getTopLevelSegment(relativePath: string): string {
-  const normalized = relativePath.replaceAll('\\', '/').replace(/^\/+/, '');
-  const [segment] = normalized.split('/');
-  return segment || '(root)';
-}
-
-function findEntrypointCandidates(files: ManifestFile[]): ManifestFile[] {
-  return files
-    .filter((file) => {
-      const normalized = file.relativePath.replaceAll('\\', '/').toLowerCase();
-      const name = file.fileName.toLowerCase();
-      return name === 'main.tsx'
-        || name === 'main.ts'
-        || name === 'main.py'
-        || name === 'app.py'
-        || name === 'application.java'
-        || name === 'build.gradle'
-        || name === 'package.json'
-        || name === 'tauri.conf.json'
-        || name === 'cargo.toml'
-        || normalized.endsWith('/app/main.py');
-    })
-    .slice(0, PROJECT_ENTRYPOINT_SAMPLE_LIMIT);
-}
-
-function isConfigLikeFile(file: ManifestFile): boolean {
-  const name = file.fileName.toLowerCase();
-  return name.endsWith('.json')
-    || name.endsWith('.toml')
-    || name.endsWith('.yaml')
-    || name.endsWith('.yml')
-    || name.endsWith('.gradle')
-    || name === 'dockerfile'
-    || name === 'requirements.txt';
-}
-
-function pickRepresentativeFiles(files: ManifestFile[], limit: number): ManifestFile[] {
-  const selected: ManifestFile[] = [];
-  const seenTopLevels = new Set<string>();
-
-  for (const file of files) {
-    const topLevel = getTopLevelSegment(file.relativePath);
-    if (seenTopLevels.has(topLevel)) continue;
-    selected.push(file);
-    seenTopLevels.add(topLevel);
-    if (selected.length >= limit) return selected;
-  }
-
-  for (const file of files) {
-    if (selected.includes(file)) continue;
-    selected.push(file);
-    if (selected.length >= limit) return selected;
-  }
-
-  return selected;
-}
-
-function formatManifestFileLine(file: ManifestFile): string {
-  const meta = [file.language, file.extension].filter(Boolean).join(', ');
-  return meta ? `${file.relativePath} (${meta})` : file.relativePath;
-}
-
-function compactLines(lines: Array<string | null | undefined>): string {
-  return lines
-    .filter((line): line is string => typeof line === 'string')
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-function limitTextByLines(value: string, maxChars: number): string {
-  if (value.length <= maxChars) return value;
-
-  const lines = value.split('\n');
-  const selected: string[] = [];
-  let length = 0;
-  for (const line of lines) {
-    const nextLength = length + line.length + 1;
-    if (nextLength > maxChars) break;
-    selected.push(line);
-    length = nextLength;
-  }
-
-  selected.push('[truncated_for_local_agent_context_budget]');
-  return selected.join('\n');
-}
-
-function normalizeAnalysisText(value: string): string {
-  const parsed = parseEmbeddedAnalysisJson(value);
-  if (parsed) {
-    return parsed.summary || parsed.detail || value;
-  }
-
-  return stripMarkdownJsonFence(value).trim();
-}
-
-function parseEmbeddedAnalysisJson(value: string): { summary: string; detail: string; actionItems: string[] } | null {
-  const candidate = extractJsonObject(stripMarkdownJsonFence(value));
-  if (!candidate) return null;
-
-  try {
-    const parsed = JSON.parse(candidate) as { summary?: unknown; detail?: unknown; actionItems?: unknown };
-    return {
-      summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
-      detail: typeof parsed.detail === 'string' ? parsed.detail.trim() : '',
-      actionItems: Array.isArray(parsed.actionItems)
-        ? parsed.actionItems.map((item) => String(item).trim()).filter(Boolean)
-        : [],
-    };
-  } catch {
-    return null;
-  }
-}
-
-function stripMarkdownJsonFence(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed.startsWith('```')) return trimmed;
-  return trimmed
-    .replace(/^```[a-zA-Z0-9_-]*\s*/, '')
-    .replace(/```$/, '')
-    .trim();
-}
-
-function extractJsonObject(value: string): string | null {
-  const start = value.indexOf('{');
-  if (start < 0) return null;
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = start; index < value.length; index += 1) {
-    const char = value[index];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === '\\') {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-    } else if (char === '{') {
-      depth += 1;
-    } else if (char === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        return value.slice(start, index + 1);
-      }
-    }
-  }
-
-  return null;
 }
 
 function buildLocalAnalysisContext(
@@ -1192,10 +1066,7 @@ function mapLocalAgentAnalysisResponse(
   response: LocalLlmAnalyzeResponse,
 ): ScreenAnalysisResponse {
   const title = response.status === 'completed' ? formatLocalAgentTitle(command.intent) : 'Local analysis failed';
-  const embedded = parseEmbeddedAnalysisJson(response.summary) ?? (response.detail ? parseEmbeddedAnalysisJson(response.detail) : null);
-  const summary = embedded?.summary || normalizeAnalysisText(response.summary) || 'Local Agent returned an empty summary.';
-  const detail = embedded?.detail || normalizeAnalysisText(response.detail ?? '') || summary;
-  const actionItems = embedded?.actionItems.length ? embedded.actionItems : (response.actionItems ?? []);
+  const summary = response.summary || 'Local Agent returned an empty summary.';
 
   return {
     requestId: command.id,
@@ -1204,9 +1075,9 @@ function mapLocalAgentAnalysisResponse(
     intent: command.intent,
     title,
     summary,
-    detail,
-    preview: summarizePreview(summary, detail),
-    actionItems,
+    detail: response.detail ?? summary,
+    preview: summarizePreview(summary, response.detail),
+    actionItems: response.actionItems ?? [],
     textUsedLength: ocrResult.textLength,
     warnings: response.warnings ?? [],
     analyzedAt: new Date().toISOString(),
