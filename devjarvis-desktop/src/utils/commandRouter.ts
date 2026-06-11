@@ -78,6 +78,7 @@ export function formatScreenTargetPolicy(policy: ScreenTargetPolicy): string {
 
 export function inferContextMode(text: string, intent: CommandIntent = inferCommandIntent(text)): ContextMode {
   const normalized = normalize(text);
+  const inlineMathMatched = hasInlineArithmeticExpression(normalized);
   const screenMatched = hasAny(normalized, [
     '화면',
     '스크린',
@@ -105,6 +106,10 @@ export function inferContextMode(text: string, intent: CommandIntent = inferComm
     'trace',
   ]);
 
+  if (intent === 'screen_math_solver') {
+    return screenMatched || !inlineMathMatched ? 'screen' : 'general';
+  }
+
   if (intent === 'screen_error_analysis') {
     return projectMatched ? 'auto' : 'screen';
   }
@@ -131,6 +136,10 @@ export function inferContextMode(text: string, intent: CommandIntent = inferComm
 export function inferCommandIntent(text: string): CommandIntent {
   const normalized = normalize(text);
   const isScreen = hasAny(normalized, ['화면', '스크린', '캡처', '캡쳐', '이미지', 'screen', 'window']);
+
+  if (hasMathIntent(normalized)) {
+    return 'screen_math_solver';
+  }
 
   if (isScreen && hasAny(normalized, ['번역', 'translate', 'translation'])) {
     return 'screen_translate';
@@ -163,6 +172,8 @@ export function formatIntent(intent: CommandIntent): string {
       return 'Screen Summary';
     case 'screen_error_analysis':
       return 'Screen Error';
+    case 'screen_math_solver':
+      return 'Screen Math';
     case 'project_diagnosis':
       return 'Project Diagnosis';
     case 'log_analysis':
@@ -188,6 +199,8 @@ function resolveCommandTitle(intent: CommandIntent): string {
       return 'Screen summary ready';
     case 'screen_error_analysis':
       return 'Screen diagnosis ready';
+    case 'screen_math_solver':
+      return 'Math result ready';
     case 'project_diagnosis':
       return 'Project context ready';
     case 'log_analysis':
@@ -242,6 +255,10 @@ function resolveNextStep(intent: CommandIntent, contextMode: ContextMode): strin
     return contextMode === 'auto' ? 'Project RAG + diagnosis pending' : 'Screen diagnosis pending';
   }
 
+  if (intent === 'screen_math_solver') {
+    return contextMode === 'general' ? 'Local calculation pending' : 'Screen calculation pending';
+  }
+
   if (intent === 'project_diagnosis') {
     return 'Project context analysis pending';
   }
@@ -259,4 +276,24 @@ function normalize(text: string): string {
 
 function hasAny(text: string, tokens: string[]): boolean {
   return tokens.some((token) => text.includes(token));
+}
+
+function hasMathIntent(text: string): boolean {
+  return hasAny(text, [
+    '계산',
+    '수계산',
+    '산수',
+    '수식',
+    '빈칸',
+    '답',
+    '풀어',
+    'solve',
+    'calculate',
+    'arithmetic',
+    'math',
+  ]);
+}
+
+function hasInlineArithmeticExpression(text: string): boolean {
+  return /\d+\s*[+\-−–]\s*\d+/.test(text);
 }

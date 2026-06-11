@@ -16,6 +16,7 @@ _INTENT_MODEL_ROLES: dict[str, str] = {
     "screen_translate": "translation",
     "screen_summary": "reasoning",
     "screen_error_analysis": "code",
+    "screen_math_solver": "reasoning",
     "project_diagnosis": "code",
     "log_analysis": "code",
     "general_chat": "default",
