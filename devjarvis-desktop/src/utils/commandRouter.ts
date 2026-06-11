@@ -243,7 +243,7 @@ function resolveNextStep(intent: CommandIntent, contextMode: ContextMode): strin
   }
 
   if (intent === 'project_diagnosis') {
-    return 'Project RAG pending';
+    return 'Project context analysis pending';
   }
 
   if (intent === 'log_analysis') {
