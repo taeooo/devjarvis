@@ -20,12 +20,12 @@ export function CommandInput({ disabled = false, onSubmit }: CommandInputProps) 
   }
 
   return (
-    <form className="command-input-bar" onSubmit={handleSubmit} aria-label="Text command input">
+    <form className="command-input-bar" onSubmit={handleSubmit} aria-label="Text command fallback">
       <span className="input-prompt" aria-hidden="true">›</span>
       <input
         value={text}
         onChange={(event) => setText(event.target.value)}
-        placeholder="Command token: /project | /screen | /math | /translate | /summary | /log"
+        placeholder="예: 이 화면 왜 그런거야? / 이 에러 원인 분석해줘"
         disabled={disabled}
         autoComplete="off"
       />

@@ -18,8 +18,7 @@ body,
 #root {
   width: 100%;
   min-width: 320px;
-  height: 100%;
-  min-height: 0;
+  min-height: 100%;
 }
 
 body {
@@ -57,9 +56,11 @@ input:disabled {
   height: 100vh;
   height: 100dvh;
   min-height: 0;
+  max-height: 100vh;
+  max-height: 100dvh;
   margin: 0 auto;
-  padding: 1rem 0;
   overflow: hidden;
+  padding: 1rem 0 1rem;
 }
 
 .app-shell::before {
@@ -212,11 +213,10 @@ input:disabled {
   position: relative;
   z-index: 1;
   display: grid;
-  flex: 1 1 auto;
+  flex: 1;
   grid-template-columns: minmax(0, 1fr) clamp(340px, 22vw, 420px);
   gap: 1rem;
   min-height: 0;
-  overflow: hidden;
   padding-top: 0.75rem;
 }
 
@@ -229,7 +229,6 @@ input:disabled {
 .main-command-zone {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  overflow: hidden;
 }
 
 .side-stack {
@@ -242,13 +241,11 @@ input:disabled {
   position: relative;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  gap: 0.75rem;
   min-height: 0;
   height: 100%;
   overflow: hidden;
   border: 1px solid rgba(103, 232, 249, 0.24);
   border-radius: 2rem;
-  padding: 1.1rem;
   background:
     radial-gradient(circle at 50% 38%, rgba(8, 145, 178, 0.34), transparent 17rem),
     linear-gradient(145deg, rgba(3, 12, 26, 0.92), rgba(7, 20, 39, 0.78));
@@ -293,19 +290,20 @@ input:disabled {
   z-index: 1;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  place-items: center;
+  align-items: center;
+  justify-items: center;
   min-height: 0;
   overflow: hidden;
-  padding: clamp(1rem, 2vh, 2.5rem) 2rem 0;
+  padding: clamp(1.2rem, 2.8vh, 2.2rem) 2rem 0.8rem;
 }
 
 .orb-shell {
   position: relative;
   display: grid;
-  width: min(36vw, 42vh, 26rem);
+  width: min(34vw, 24rem, 42vh);
+  max-width: 100%;
   aspect-ratio: 1;
   place-items: center;
-  align-self: center;
 }
 
 .orb-ring,
@@ -352,7 +350,6 @@ input:disabled {
   z-index: 1;
   display: grid;
   width: min(86%, 34rem);
-  min-width: 0;
   place-items: center;
   text-align: center;
 }
@@ -371,13 +368,13 @@ input:disabled {
 }
 
 .core-readout strong {
-  display: block;
   max-width: 100%;
   margin-top: 0.28rem;
   overflow: hidden;
   color: #f0fdff;
-  font-size: clamp(1.8rem, 3.6vw, 3.25rem);
+  font-size: clamp(1.65rem, 3.6vw, 3.1rem);
   font-weight: 950;
+  line-height: 1.04;
   letter-spacing: -0.065em;
   text-overflow: ellipsis;
   text-shadow: 0 0 28px rgba(103, 232, 249, 0.36);
@@ -406,10 +403,12 @@ input:disabled {
 .command-readout {
   position: relative;
   z-index: 2;
-  max-height: 6.2rem;
+  min-height: 0;
+  max-height: 7.4rem;
+  margin: 0 1.3rem 1.3rem;
   overflow: hidden;
   border-radius: 1.25rem;
-  padding: 0.9rem 1rem;
+  padding: 0.82rem 1rem;
 }
 
 .command-readout strong {
@@ -430,6 +429,7 @@ input:disabled {
   overflow: hidden;
   font-size: 0.82rem;
   font-weight: 750;
+  line-height: 1.35;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -649,36 +649,6 @@ input:disabled {
   border-radius: 1rem;
   padding: 0 0.85rem;
   background: rgba(2, 11, 27, 0.42);
-}
-
-.token-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
-  gap: 0.55rem;
-  padding: 0;
-  list-style: none;
-}
-
-.token-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  border: 1px solid rgba(103, 232, 249, 0.16);
-  border-radius: 0.85rem;
-  padding: 0.62rem 0.72rem;
-  background: rgba(2, 11, 27, 0.38);
-}
-
-.token-list code {
-  color: #e0faff;
-  font-weight: 900;
-}
-
-.token-list span {
-  color: #93c5fd;
-  font-size: 0.78rem;
-  font-weight: 800;
 }
 
 @keyframes rotate-orbit {
@@ -967,9 +937,12 @@ input:disabled {
 .result-detail-overlay {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 10000;
   display: grid;
   place-items: center;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
   padding: 1.25rem;
   background: rgba(2, 6, 23, 0.72);
   backdrop-filter: blur(12px);
@@ -978,8 +951,8 @@ input:disabled {
 .result-detail-dialog {
   display: flex;
   flex-direction: column;
-  width: min(860px, calc(100vw - 2rem));
-  max-height: min(760px, calc(100vh - 2rem));
+  width: min(1040px, calc(100vw - 2rem));
+  max-height: min(820px, calc(100dvh - 2rem));
   overflow: hidden;
   border: 1px solid rgba(103, 232, 249, 0.28);
   border-radius: 1.3rem;
@@ -1027,7 +1000,9 @@ input:disabled {
 .result-detail-body {
   display: grid;
   gap: 1rem;
+  min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 1rem 1.1rem 1.2rem;
 }
 
@@ -1052,8 +1027,8 @@ input:disabled {
 }
 
 .result-detail-body pre {
-  max-height: 20rem;
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
   border: 1px solid rgba(103, 232, 249, 0.12);
   border-radius: 0.8rem;
   padding: 0.8rem;
@@ -1164,7 +1139,9 @@ input:disabled {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.85rem;
+  min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 1rem 1.1rem 1.2rem;
 }
 
@@ -1218,26 +1195,6 @@ input:disabled {
   }
 }
 
-.core-stage {
-  padding: clamp(2rem, 4vh, 3rem) 2rem clamp(5.2rem, 9vh, 6.2rem);
-}
-
-.orb-shell {
-  width: min(38vw, 28rem, 58vh);
-}
-
-.core-readout {
-  bottom: clamp(1.4rem, 3.5vh, 2.2rem);
-}
-
-.core-readout strong {
-  max-width: 100%;
-  overflow: hidden;
-  font-size: clamp(1.65rem, 4.3vw, 3.35rem);
-  line-height: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .voice-push-button {
   width: 100%;
