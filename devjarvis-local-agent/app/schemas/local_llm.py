@@ -6,6 +6,7 @@ LocalLlmIntent = Literal[
     "screen_translate",
     "screen_summary",
     "screen_error_analysis",
+    "screen_math_solver",
     "project_diagnosis",
     "log_analysis",
     "general_chat",

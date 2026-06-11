@@ -5,6 +5,7 @@ _INTENT_TASKS: dict[str, str] = {
     "screen_translate": "Translate the screen text into Korean. Preserve technical terms when useful.",
     "screen_summary": "Summarize the screen text into concise Korean bullet points.",
     "screen_error_analysis": "Analyze the visible error. Explain likely causes and safe next actions in Korean.",
+    "screen_math_solver": "Solve the visible arithmetic or worksheet problems in Korean. Show final answers clearly. If exact calculation is not possible, say what is unclear.",
     "project_diagnosis": "Analyze the project context and suggest likely causes and next checks in Korean.",
     "log_analysis": "Analyze the log text. Identify errors, root cause candidates, and next checks in Korean.",
     "general_chat": "Answer the user's command in Korean based only on the provided text.",

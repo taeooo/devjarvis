@@ -727,6 +727,8 @@ function formatLocalAgentTitle(intent: CommandInput['intent']): string {
       return 'Summary ready';
     case 'screen_error_analysis':
       return 'Diagnosis ready';
+    case 'screen_math_solver':
+      return 'Calculation ready';
     case 'project_diagnosis':
       return 'Project diagnosis ready';
     case 'log_analysis':

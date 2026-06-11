@@ -1,5 +1,6 @@
 from app.core.config import get_settings
 from app.schemas.local_llm import LocalLlmAnalyzeRequest, LocalLlmAnalyzeResponse, LocalLlmHealthResponse
+from app.services.math_solver import solve_arithmetic_text
 from app.services.ollama_client import OllamaClient
 
 
@@ -11,6 +12,11 @@ class LocalLlmService:
         return await self.client.health()
 
     async def analyze(self, request: LocalLlmAnalyzeRequest) -> LocalLlmAnalyzeResponse:
+        if request.intent == "screen_math_solver":
+            deterministic_response = solve_arithmetic_text(request.text)
+            if deterministic_response is not None:
+                return deterministic_response
+
         return await self.client.analyze(request)
 
 
