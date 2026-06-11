@@ -40,14 +40,34 @@ class ProjectServiceTest {
     }
 
     @Test
-    void createRejectsNameConflictForDifferentRootPathAlias() {
-        when(projectRepository.findFirstByRootPathAliasAndStatus("LOCAL_PROJECT::other", ProjectStatus.ACTIVE))
+    void createReturnsExistingActiveProjectWhenNameAlreadyExists() {
+        Project existing = Project.create("devjarvis", "LOCAL_PROJECT::devjarvis", null);
+        when(projectRepository.findFirstByRootPathAliasAndStatus("LOCAL_PROJECT::different", ProjectStatus.ACTIVE))
+                .thenReturn(Optional.empty());
+        when(projectRepository.findFirstByNameIgnoreCaseAndStatus("devjarvis", ProjectStatus.ACTIVE))
+                .thenReturn(Optional.of(existing));
+
+        ProjectResponse response = projectService.create(new ProjectCreateRequest(
+                "devjarvis",
+                "LOCAL_PROJECT::different",
+                null
+        ));
+
+        assertThat(response.name()).isEqualTo("devjarvis");
+        verify(projectRepository, never()).save(any(Project.class));
+    }
+
+    @Test
+    void createRejectsInactiveNameConflict() {
+        when(projectRepository.findFirstByRootPathAliasAndStatus("LOCAL_PROJECT::devjarvis", ProjectStatus.ACTIVE))
+                .thenReturn(Optional.empty());
+        when(projectRepository.findFirstByNameIgnoreCaseAndStatus("devjarvis", ProjectStatus.ACTIVE))
                 .thenReturn(Optional.empty());
         when(projectRepository.existsByNameIgnoreCase("devjarvis")).thenReturn(true);
 
         assertThatThrownBy(() -> projectService.create(new ProjectCreateRequest(
                 "devjarvis",
-                "LOCAL_PROJECT::other",
+                "LOCAL_PROJECT::devjarvis",
                 null
         ))).isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("PROJECT_NAME_CONFLICT");
