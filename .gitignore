@@ -21,6 +21,9 @@ src-tauri/target/
 .venv/
 .venv-wsl/
 __pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.pyc
 
 # Env / Secrets
