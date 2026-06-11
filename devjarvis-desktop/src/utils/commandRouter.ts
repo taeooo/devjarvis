@@ -79,32 +79,8 @@ export function formatScreenTargetPolicy(policy: ScreenTargetPolicy): string {
 export function inferContextMode(text: string, intent: CommandIntent = inferCommandIntent(text)): ContextMode {
   const normalized = normalize(text);
   const inlineMathMatched = hasInlineArithmeticExpression(normalized);
-  const screenMatched = hasAny(normalized, [
-    '화면',
-    '스크린',
-    '캡처',
-    '캡쳐',
-    '번역',
-    '요약',
-    '이미지',
-    'window',
-    'screen',
-  ]);
-  const projectMatched = hasAny(normalized, [
-    '프로젝트',
-    '소스',
-    '코드',
-    '파일',
-    '빌드',
-    '컴파일',
-    '에러',
-    '오류',
-    '로그',
-    '원인',
-    '스택트레이스',
-    'stack',
-    'trace',
-  ]);
+  const screenMatched = hasScreenKeyword(normalized);
+  const projectMatched = hasProjectKeyword(normalized);
 
   if (intent === 'screen_math_solver') {
     return screenMatched || !inlineMathMatched ? 'screen' : 'general';
@@ -114,8 +90,12 @@ export function inferContextMode(text: string, intent: CommandIntent = inferComm
     return projectMatched ? 'auto' : 'screen';
   }
 
-  if (intent === 'project_diagnosis' || intent === 'log_analysis') {
-    return screenMatched ? 'auto' : 'project';
+  if (intent === 'project_diagnosis') {
+    return 'project';
+  }
+
+  if (intent === 'log_analysis') {
+    return projectMatched ? 'project' : 'general';
   }
 
   if (screenMatched && projectMatched) {
@@ -135,7 +115,21 @@ export function inferContextMode(text: string, intent: CommandIntent = inferComm
 
 export function inferCommandIntent(text: string): CommandIntent {
   const normalized = normalize(text);
-  const isScreen = hasAny(normalized, ['화면', '스크린', '캡처', '캡쳐', '이미지', 'screen', 'window']);
+  const isScreen = hasScreenKeyword(normalized);
+  const isProject = hasProjectKeyword(normalized);
+  const isLog = hasAny(normalized, ['로그', 'log']);
+
+  if (isScreen && hasMathIntent(normalized)) {
+    return 'screen_math_solver';
+  }
+
+  if (!isScreen && isProject) {
+    return 'project_diagnosis';
+  }
+
+  if (!isScreen && isLog) {
+    return 'log_analysis';
+  }
 
   if (hasMathIntent(normalized)) {
     return 'screen_math_solver';
@@ -153,11 +147,11 @@ export function inferCommandIntent(text: string): CommandIntent {
     return 'screen_error_analysis';
   }
 
-  if (hasAny(normalized, ['로그', 'log'])) {
+  if (isLog) {
     return 'log_analysis';
   }
 
-  if (hasAny(normalized, ['프로젝트', '소스', '코드', '빌드', '컴파일', '원인', 'stack', 'trace'])) {
+  if (isProject) {
     return 'project_diagnosis';
   }
 
@@ -276,6 +270,27 @@ function normalize(text: string): string {
 
 function hasAny(text: string, tokens: string[]): boolean {
   return tokens.some((token) => text.includes(token));
+}
+
+function hasScreenKeyword(text: string): boolean {
+  return hasAny(text, ['화면', '스크린', '캡처', '캡쳐', '이미지', 'screen', 'window']);
+}
+
+function hasProjectKeyword(text: string): boolean {
+  return hasAny(text, [
+    '프로젝트',
+    '소스',
+    '코드',
+    '파일',
+    '구조',
+    '모듈',
+    '컴포넌트',
+    '빌드',
+    '컴파일',
+    '스택트레이스',
+    'stack',
+    'trace',
+  ]);
 }
 
 function hasMathIntent(text: string): boolean {
