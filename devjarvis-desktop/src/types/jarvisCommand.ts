@@ -31,7 +31,8 @@ export type CommandIntent =
 
 export type CommandPipelineStage =
   | 'received'
-  | 'waiting_for_screen_selection'
+  | 'checking_local_assistant'
+  | 'waiting_screen_target'
   | 'capturing_screen'
   | 'extracting_ocr'
   | 'solving_math'
@@ -61,7 +62,6 @@ export type OcrExtractionState = 'not_requested' | 'uploading' | 'extracting' | 
 export type ScreenAnalysisState = 'not_requested' | 'analyzing' | 'completed' | 'failed';
 
 export type CommandResultMetadata = {
-  resultSource?: 'screen' | 'screen_math' | 'project' | 'text' | 'auto';
   analysisSource?: 'local_agent' | 'remote_backend';
   localAgentState?: LocalAgentConnectionState;
   localAgentProvider?: string | null;
@@ -71,8 +71,6 @@ export type CommandResultMetadata = {
   manifestTargetFileCount?: number;
   manifestExcludedFileCount?: number;
   projectContext?: 'selected' | 'not_selected';
-  projectLanguageSummary?: string;
-  projectDirectorySummary?: string;
   ocrProvider?: string;
   ocrStatus?: string;
   ocrTextLength?: number;
@@ -85,6 +83,9 @@ export type CommandResultMetadata = {
   analysisDetail?: string;
   analysisPreview?: string;
   analysisActionItems?: string[];
+  projectAnalysisSummary?: string;
+  projectAnalysisDetail?: string;
+  projectAnalysisActionItems?: string[];
   screenTarget?: string;
   screenTargetPolicy?: ScreenTargetPolicy;
 };

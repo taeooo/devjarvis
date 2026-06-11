@@ -43,8 +43,8 @@ export function createCommandPlan(command: CommandInput): CommandExecutionPlan {
     needsScreenCapture,
     needsProjectManifest,
     title,
-    pendingSummary: resolvePendingSummary(command.contextMode),
-    readySummary: resolveReadySummary(command.contextMode),
+    pendingSummary: resolvePendingSummary(command.contextMode, command.intent),
+    readySummary: resolveReadySummary(command.contextMode, command.intent),
     nextStep: resolveNextStep(command.intent, command.contextMode),
     displayMode: command.contextMode === 'general' ? 'notify' : 'open_app',
     screenTargetPolicy: resolveScreenTargetPolicy(command),
@@ -79,10 +79,14 @@ export function formatScreenTargetPolicy(policy: ScreenTargetPolicy): string {
 export function inferContextMode(text: string, intent: CommandIntent = inferCommandIntent(text)): ContextMode {
   const normalized = normalize(text);
   const inlineMathMatched = hasInlineArithmeticExpression(normalized);
-  const screenMatched = hasScreenKeyword(normalized);
-  const projectMatched = hasProjectKeyword(normalized);
+  const screenMatched = hasScreenReference(normalized);
+  const projectMatched = hasProjectReference(normalized);
 
   if (intent === 'screen_math_solver') {
+    if (projectMatched && !screenMatched && !inlineMathMatched) {
+      return 'project';
+    }
+
     return screenMatched || !inlineMathMatched ? 'screen' : 'general';
   }
 
@@ -90,12 +94,8 @@ export function inferContextMode(text: string, intent: CommandIntent = inferComm
     return projectMatched ? 'auto' : 'screen';
   }
 
-  if (intent === 'project_diagnosis') {
-    return 'project';
-  }
-
-  if (intent === 'log_analysis') {
-    return projectMatched ? 'project' : 'general';
+  if (intent === 'project_diagnosis' || intent === 'log_analysis') {
+    return screenMatched ? 'auto' : 'project';
   }
 
   if (screenMatched && projectMatched) {
@@ -115,43 +115,39 @@ export function inferContextMode(text: string, intent: CommandIntent = inferComm
 
 export function inferCommandIntent(text: string): CommandIntent {
   const normalized = normalize(text);
-  const isScreen = hasScreenKeyword(normalized);
-  const isProject = hasProjectKeyword(normalized);
-  const isLog = hasAny(normalized, ['로그', 'log']);
+  const screenMatched = hasScreenReference(normalized);
+  const projectMatched = hasProjectReference(normalized);
+  const inlineMathMatched = hasInlineArithmeticExpression(normalized);
 
-  if (isScreen && hasMathIntent(normalized)) {
+  if (screenMatched && hasMathIntent(normalized)) {
     return 'screen_math_solver';
   }
 
-  if (!isScreen && isProject) {
+  if (projectMatched && hasProjectDiagnosisIntent(normalized) && !screenMatched) {
     return 'project_diagnosis';
   }
 
-  if (!isScreen && isLog) {
-    return 'log_analysis';
-  }
-
-  if (hasMathIntent(normalized)) {
+  if (hasMathIntent(normalized) && (screenMatched || inlineMathMatched || !projectMatched)) {
     return 'screen_math_solver';
   }
 
-  if (isScreen && hasAny(normalized, ['번역', 'translate', 'translation'])) {
+  if (screenMatched && hasAny(normalized, ['번역', 'translate', 'translation'])) {
     return 'screen_translate';
   }
 
-  if (isScreen && hasAny(normalized, ['요약', '정리', 'summary', 'summarize'])) {
+  if (screenMatched && hasAny(normalized, ['요약', '정리', 'summary', 'summarize'])) {
     return 'screen_summary';
   }
 
-  if (isScreen && hasAny(normalized, ['에러', '오류', '왜', '원인', '문제', 'error', 'exception', 'failed'])) {
+  if (screenMatched && hasAny(normalized, ['에러', '오류', '왜', '원인', '문제', 'error', 'exception', 'failed'])) {
     return 'screen_error_analysis';
   }
 
-  if (isLog) {
+  if (hasAny(normalized, ['로그', 'log'])) {
     return 'log_analysis';
   }
 
-  if (isProject) {
+  if (projectMatched) {
     return 'project_diagnosis';
   }
 
@@ -196,7 +192,7 @@ function resolveCommandTitle(intent: CommandIntent): string {
     case 'screen_math_solver':
       return 'Math result ready';
     case 'project_diagnosis':
-      return 'Project context ready';
+      return 'Project analysis ready';
     case 'log_analysis':
       return 'Log context ready';
     case 'general_chat':
@@ -204,64 +200,64 @@ function resolveCommandTitle(intent: CommandIntent): string {
   }
 }
 
-function resolvePendingSummary(contextMode: ContextMode): string {
+function resolvePendingSummary(contextMode: ContextMode, intent: CommandIntent): string {
   if (contextMode === 'screen') {
-    return 'Preparing screen context';
+    return intent === 'screen_math_solver' ? 'Waiting for screen selection' : 'Preparing screen context';
   }
 
   if (contextMode === 'project') {
-    return 'Refreshing project manifest';
+    return 'Analyzing project';
   }
 
   if (contextMode === 'auto') {
     return 'Preparing screen and project context';
   }
 
-  return 'Analyzing command locally';
+  return intent === 'screen_math_solver' ? 'Solving math' : 'Thinking';
 }
 
-function resolveReadySummary(contextMode: ContextMode): string {
+function resolveReadySummary(contextMode: ContextMode, intent: CommandIntent): string {
   if (contextMode === 'screen') {
-    return 'Screen context captured';
+    return intent === 'screen_math_solver' ? 'Math result ready' : 'Screen context captured';
   }
 
   if (contextMode === 'project') {
-    return 'Project manifest refreshed';
+    return 'Project analysis ready';
   }
 
   if (contextMode === 'auto') {
     return 'Context bundle prepared';
   }
 
-  return 'Analyzing command locally';
+  return 'Done';
 }
 
 function resolveNextStep(intent: CommandIntent, contextMode: ContextMode): string {
   if (intent === 'screen_translate') {
-    return 'Translation / vision analysis pending';
+    return 'Review the translated screen text in detail view';
   }
 
   if (intent === 'screen_summary') {
-    return 'Screen summary analysis pending';
+    return 'Review the screen summary in detail view';
   }
 
   if (intent === 'screen_error_analysis') {
-    return contextMode === 'auto' ? 'Project RAG + diagnosis pending' : 'Screen diagnosis pending';
+    return contextMode === 'auto' ? 'Review screen and project diagnosis' : 'Review screen diagnosis';
   }
 
   if (intent === 'screen_math_solver') {
-    return contextMode === 'general' ? 'Local calculation pending' : 'Screen calculation pending';
+    return contextMode === 'general' ? 'Review the calculated result' : 'Review the full solution in detail view';
   }
 
   if (intent === 'project_diagnosis') {
-    return 'Project context analysis pending';
+    return 'Review project structure notes in detail view';
   }
 
   if (intent === 'log_analysis') {
-    return 'Log parser pending';
+    return 'Review log analysis in detail view';
   }
 
-  return 'Local response pending';
+  return 'Review the response';
 }
 
 function normalize(text: string): string {
@@ -272,24 +268,54 @@ function hasAny(text: string, tokens: string[]): boolean {
   return tokens.some((token) => text.includes(token));
 }
 
-function hasScreenKeyword(text: string): boolean {
-  return hasAny(text, ['화면', '스크린', '캡처', '캡쳐', '이미지', 'screen', 'window']);
+function hasScreenReference(text: string): boolean {
+  return hasAny(text, [
+    '화면',
+    '스크린',
+    '캡처',
+    '캡쳐',
+    '이미지',
+    'window',
+    'screen',
+  ]);
 }
 
-function hasProjectKeyword(text: string): boolean {
+function hasProjectReference(text: string): boolean {
   return hasAny(text, [
     '프로젝트',
     '소스',
     '코드',
     '파일',
+    '폴더',
     '구조',
-    '모듈',
-    '컴포넌트',
     '빌드',
     '컴파일',
+    '에러',
+    '오류',
+    '로그',
+    '원인',
     '스택트레이스',
     'stack',
     'trace',
+    'repository',
+    'repo',
+  ]);
+}
+
+function hasProjectDiagnosisIntent(text: string): boolean {
+  return hasAny(text, [
+    '분석',
+    '진단',
+    '확인',
+    '파악',
+    '봐줘',
+    '알려줘',
+    '구조',
+    '왜',
+    '원인',
+    'analysis',
+    'diagnose',
+    'review',
   ]);
 }
 

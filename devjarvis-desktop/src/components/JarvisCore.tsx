@@ -6,7 +6,7 @@ type JarvisCoreProps = {
   lastCommand: CommandInput | null;
   systemMessage: string | null;
   errorMessage: string | null;
-  activityLabel?: string | null;
+  commandPhaseLabel: string;
 };
 
 export function JarvisCore({
@@ -15,9 +15,9 @@ export function JarvisCore({
   lastCommand,
   systemMessage,
   errorMessage,
-  activityLabel,
+  commandPhaseLabel,
 }: JarvisCoreProps) {
-  const coreLabel = resolveCoreLabel(assistantState, isProcessing, Boolean(errorMessage), activityLabel);
+  const coreLabel = resolveCoreLabel(assistantState, isProcessing, Boolean(errorMessage), commandPhaseLabel);
 
   return (
     <section className="jarvis-core-panel" aria-label="Jarvis command core">
@@ -58,10 +58,10 @@ function resolveCoreLabel(
   assistantState: LocalAgentConnectionState,
   isProcessing: boolean,
   hasError: boolean,
-  activityLabel?: string | null,
+  commandPhaseLabel: string,
 ): string {
   if (isProcessing) {
-    return activityLabel ?? 'Thinking';
+    return commandPhaseLabel || 'Thinking';
   }
 
   if (hasError) {
