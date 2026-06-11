@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { CommandResult } from '../types/jarvisCommand';
 
 const MAX_RENDERED_HISTORY = 2;
@@ -39,8 +40,9 @@ export function CommandResultPanel({ results }: CommandResultPanelProps) {
         )}
       </div>
 
-      {selectedResult && (
-        <ResultDetailDialog result={selectedResult} onClose={() => setSelectedResult(null)} />
+      {selectedResult && createPortal(
+        <ResultDetailDialog result={selectedResult} onClose={() => setSelectedResult(null)} />,
+        document.body,
       )}
     </aside>
   );
@@ -101,6 +103,17 @@ function ResultDetailDialog({ result, onClose }: ResultDetailDialogProps) {
   const relatedFiles = result.metadata?.relatedProjectFiles ?? [];
   const timestamp = result.completedAt ?? result.createdAt;
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   return (
     <div className="result-detail-overlay" role="presentation" onClick={onClose}>
       <section
@@ -108,6 +121,7 @@ function ResultDetailDialog({ result, onClose }: ResultDetailDialogProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="result-detail-title"
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="result-detail-header">

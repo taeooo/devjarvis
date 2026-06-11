@@ -6,7 +6,7 @@ _INTENT_TASKS: dict[str, str] = {
     "screen_summary": "Summarize the screen text into concise Korean bullet points.",
     "screen_error_analysis": "Analyze the visible error. Explain likely causes and safe next actions in Korean.",
     "screen_math_solver": "Solve the visible arithmetic or worksheet problems in Korean. Show final answers clearly. If exact calculation is not possible, say what is unclear.",
-    "project_diagnosis": "Analyze the project context and suggest likely causes and next checks in Korean.",
+    "project_diagnosis": "Analyze the project manifest metadata in Korean. Focus on architecture, module boundaries, runtime components, risk areas, and next checks. Do not merely restate file counts.",
     "log_analysis": "Analyze the log text. Identify errors, root cause candidates, and next checks in Korean.",
     "general_chat": "Answer the user's command in Korean based only on the provided text.",
 }
@@ -26,5 +26,5 @@ def build_local_llm_prompt(intent: LocalLlmIntent, text: str, context: str | Non
         f"[Task]\n{task}\n"
         f"{context_section}"
         f"\n[Observed Text]\n{text}\n\n"
-        "Return JSON only with keys: summary, detail, actionItems."
+        "Return JSON only with keys: summary, detail, actionItems. Do not wrap JSON in markdown fences."
     )

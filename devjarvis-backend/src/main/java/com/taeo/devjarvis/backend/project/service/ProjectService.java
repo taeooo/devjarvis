@@ -13,8 +13,6 @@ import java.util.List;
 @Service
 public class ProjectService {
 
-    private static final String PROJECT_NAME_CONFLICT_CODE = "PROJECT_NAME_CONFLICT";
-
     private final ProjectRepository projectRepository;
 
     public ProjectService(ProjectRepository projectRepository) {
@@ -24,24 +22,13 @@ public class ProjectService {
     @Transactional
     public ProjectResponse create(ProjectCreateRequest request) {
         String normalizedName = request.name().trim();
-        String normalizedRootPathAlias = normalizeBlankToNull(request.rootPathAlias());
-
-        if (normalizedRootPathAlias != null) {
-            Project existingProject = projectRepository
-                    .findFirstByRootPathAliasAndStatus(normalizedRootPathAlias, ProjectStatus.ACTIVE)
-                    .orElse(null);
-            if (existingProject != null) {
-                return ProjectResponse.from(existingProject);
-            }
-        }
-
         if (projectRepository.existsByNameIgnoreCase(normalizedName)) {
-            throw new IllegalArgumentException(PROJECT_NAME_CONFLICT_CODE);
+            throw new IllegalArgumentException("이미 등록된 프로젝트명입니다: " + normalizedName);
         }
 
         Project project = Project.create(
                 normalizedName,
-                normalizedRootPathAlias,
+                normalizeBlankToNull(request.rootPathAlias()),
                 normalizeBlankToNull(request.description())
         );
 
@@ -60,7 +47,7 @@ public class ProjectService {
     public ProjectResponse findById(Long projectId) {
         Project project = projectRepository.findById(projectId)
                 .filter(found -> found.getStatus() == ProjectStatus.ACTIVE)
-                .orElseThrow(() -> new IllegalArgumentException("PROJECT_NOT_FOUND"));
+                .orElseThrow(() -> new IllegalArgumentException("프로젝트를 찾을 수 없습니다. projectId=" + projectId));
 
         return ProjectResponse.from(project);
     }
