@@ -1,4 +1,4 @@
-export type VoiceState = 'unavailable' | 'idle' | 'listening' | 'transcribing' | 'ready' | 'error';
+export type VoiceState = 'unavailable' | 'idle' | 'recording' | 'processing' | 'text_ready' | 'error';
 
 export type SystemStatus = 'Ready' | 'Setup needed' | 'Checking' | 'Processing';
 
@@ -31,8 +31,7 @@ export type CommandIntent =
 
 export type CommandPipelineStage =
   | 'received'
-  | 'checking_local_assistant'
-  | 'waiting_screen_target'
+  | 'waiting_for_screen_selection'
   | 'capturing_screen'
   | 'extracting_ocr'
   | 'solving_math'
@@ -61,6 +60,15 @@ export type OcrExtractionState = 'not_requested' | 'uploading' | 'extracting' | 
 
 export type ScreenAnalysisState = 'not_requested' | 'analyzing' | 'completed' | 'failed';
 
+export type RelatedProjectFileCandidate = {
+  relativePath: string;
+  fileName: string;
+  extension: string;
+  language: string;
+  matchReasons: string[];
+  score: number;
+};
+
 export type CommandResultMetadata = {
   analysisSource?: 'local_agent' | 'remote_backend';
   localAgentState?: LocalAgentConnectionState;
@@ -83,9 +91,9 @@ export type CommandResultMetadata = {
   analysisDetail?: string;
   analysisPreview?: string;
   analysisActionItems?: string[];
-  projectAnalysisSummary?: string;
-  projectAnalysisDetail?: string;
-  projectAnalysisActionItems?: string[];
+  relatedProjectFiles?: RelatedProjectFileCandidate[];
+  projectAwareSignalCount?: number;
+  projectAwareFileCandidateCount?: number;
   screenTarget?: string;
   screenTargetPolicy?: ScreenTargetPolicy;
 };
@@ -267,4 +275,29 @@ export type ScreenAnalysisResponse = {
   textUsedLength: number;
   warnings: string[];
   analyzedAt: string;
+};
+
+export type LocalSttHealthResponse = {
+  available: boolean;
+  warning: string | null;
+};
+
+export type LocalSttAudioPayload = {
+  dataUrl: string;
+  mimeType: 'audio/wav' | 'audio/webm' | 'audio/ogg' | 'audio/mpeg';
+  byteSize: number;
+  durationMillis?: number | null;
+  recordedAt?: string | null;
+};
+
+export type LocalSttTranscribeRequest = {
+  commandId?: string;
+  audio?: LocalSttAudioPayload | null;
+};
+
+export type LocalSttTranscribeResponse = {
+  status: 'completed' | 'failed' | 'unavailable';
+  text: string;
+  textReady: boolean;
+  warnings: string[];
 };
