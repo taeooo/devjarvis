@@ -13,8 +13,6 @@ async def health() -> ApiResponse[HealthResponse]:
     return ApiResponse.ok(
         HealthResponse(
             status="UP",
-            service=settings.app_name,
-            version=settings.app_version,
             loopbackOnly=settings.require_loopback,
         )
     )

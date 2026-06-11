@@ -20,14 +20,10 @@ class OllamaClient:
     async def health(self) -> LocalLlmHealthResponse:
         routing = build_model_routing_snapshot(self.settings)
         configured_models = {model for model in routing.values() if model}
-        primary_model = routing.get("default") or next(iter(configured_models), None)
 
         if not configured_models:
             return LocalLlmHealthResponse(
                 available=False,
-                model=None,
-                baseUrl=self.base_url,
-                modelRouting=routing,
                 warning="Ollama model routing is not configured.",
             )
 
@@ -39,20 +35,15 @@ class OllamaClient:
         except Exception as exc:  # noqa: BLE001
             return LocalLlmHealthResponse(
                 available=False,
-                model=primary_model,
-                baseUrl=self.base_url,
-                modelRouting=routing,
                 warning=f"Ollama is not available: {type(exc).__name__}",
             )
 
         models = payload.get("models", []) if isinstance(payload, dict) else []
         names = {item.get("name") for item in models if isinstance(item, dict)}
+        all_models_ready = all(model in names for model in configured_models)
         return LocalLlmHealthResponse(
-            available=all(model in names for model in configured_models),
-            model=primary_model,
-            baseUrl=self.base_url,
-            modelRouting=routing,
-            warning=None if all(model in names for model in configured_models) else "One or more configured models were not found in Ollama.",
+            available=all_models_ready,
+            warning=None if all_models_ready else "One or more configured models were not found in Ollama.",
         )
 
     async def analyze(self, request: LocalLlmAnalyzeRequest) -> LocalLlmAnalyzeResponse:
@@ -60,9 +51,6 @@ class OllamaClient:
         if not route.model:
             return LocalLlmAnalyzeResponse(
                 status="failed",
-                model=None,
-                modelRole=route.role,
-                intent=request.intent,
                 summary="Ollama model routing is not configured.",
                 warnings=["ollama_model_missing"],
             )
@@ -95,9 +83,6 @@ class OllamaClient:
             parsed = self._parse_model_json(content)
             return LocalLlmAnalyzeResponse(
                 status="completed",
-                model=route.model,
-                modelRole=route.role,
-                intent=request.intent,
                 summary=parsed.get("summary") or content[:500] or "Analysis completed.",
                 detail=parsed.get("detail"),
                 actionItems=self._as_string_list(parsed.get("actionItems")),
@@ -106,9 +91,6 @@ class OllamaClient:
         except Exception as exc:  # noqa: BLE001
             return LocalLlmAnalyzeResponse(
                 status="failed",
-                model=route.model,
-                modelRole=route.role,
-                intent=request.intent,
                 summary="Local LLM analysis failed.",
                 detail=f"{type(exc).__name__}",
                 warnings=[*warnings, "ollama_request_failed"],

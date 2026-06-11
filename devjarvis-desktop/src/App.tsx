@@ -14,7 +14,6 @@ import {
   getLocalAgentAppHealth,
   getLocalAgentHealth,
   getLocalOcrHealth,
-  localAgentBaseUrl,
 } from './api/localAgentClient';
 import { notifyCommandResult } from './utils/nativeWindow';
 import { createClientId, createCommandInput, createCommandPlan } from './utils/commandRouter';
@@ -85,10 +84,6 @@ const initialScreenContext: ScreenContextSnapshot = {
 
 const initialLocalAgentHealth: LocalAgentHealthSnapshot = {
   state: 'checking',
-  provider: null,
-  model: null,
-  baseUrl: localAgentBaseUrl,
-  modelRouting: {},
   warning: null,
   checkedAt: null,
   errorMessage: null,
@@ -236,10 +231,6 @@ function App() {
   function applyLocalAssistantReadiness(readiness: LocalAssistantReadiness) {
     setLocalAgentHealth({
       state: readiness.ready ? 'ready' : 'unavailable',
-      provider: null,
-      model: null,
-      baseUrl: localAgentBaseUrl,
-      modelRouting: {},
       warning: readiness.message,
       checkedAt: readiness.checkedAt,
       errorMessage: readiness.ready ? null : readiness.message,
@@ -712,7 +703,7 @@ function mapLocalAgentAnalysisResponse(
 
   return {
     requestId: command.id,
-    provider: response.modelRole ? `local-agent:${response.modelRole}` : 'local-agent',
+    provider: 'local-agent',
     status: response.status,
     intent: command.intent,
     title,

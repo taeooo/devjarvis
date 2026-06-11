@@ -35,7 +35,6 @@ class LocalOcrService:
 
         return LocalOcrHealthResponse(
             available=warning is None,
-            provider=provider,  # type: ignore[arg-type]
             maxImageBytes=self.settings.ocr_max_image_bytes,
             maxWidth=self.settings.ocr_max_width,
             maxHeight=self.settings.ocr_max_height,
@@ -53,7 +52,6 @@ class LocalOcrService:
             except Exception as exc:  # noqa: BLE001 - do not log or return image/OCR text.
                 return _build_response(
                     request=request,
-                    provider="rapidocr",
                     status="failed",
                     text="",
                     blocks=[],
@@ -66,7 +64,6 @@ class LocalOcrService:
 
             return _build_response(
                 request=request,
-                provider="rapidocr",
                 status="completed",
                 text=text,
                 blocks=blocks,
@@ -75,7 +72,6 @@ class LocalOcrService:
 
         return _build_response(
             request=request,
-            provider="placeholder",
             status="completed",
             text="",
             blocks=[],
@@ -226,7 +222,6 @@ def _box_to_bounds(box: Any) -> tuple[int, int, int, int]:
 def _build_response(
     *,
     request: LocalOcrExtractRequest,
-    provider: str,
     status: str,
     text: str,
     blocks: list[LocalOcrTextBlock],
@@ -237,7 +232,6 @@ def _build_response(
 
     return LocalOcrExtractResponse(
         requestId=request.commandId or str(uuid4()),
-        provider=provider,  # type: ignore[arg-type]
         status=status,  # type: ignore[arg-type]
         text=normalized_text,
         textFound=bool(normalized_text),

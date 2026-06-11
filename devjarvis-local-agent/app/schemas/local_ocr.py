@@ -9,7 +9,6 @@ LocalOcrMimeType = Literal["image/jpeg", "image/png", "image/webp"]
 
 class LocalOcrHealthResponse(BaseModel):
     available: bool
-    provider: LocalOcrProvider
     maxImageBytes: int
     maxWidth: int
     maxHeight: int
@@ -38,7 +37,7 @@ class LocalOcrImagePayload(BaseModel):
 class LocalOcrExtractRequest(BaseModel):
     commandId: str | None = Field(default=None, max_length=80)
     intent: str | None = Field(default=None, max_length=80)
-    contextMode: str | None = Field(default=None, max_length=40)
+    contextMode: str | None = Field(default=None, max_length=80)
     image: LocalOcrImagePayload
 
 
@@ -53,7 +52,6 @@ class LocalOcrTextBlock(BaseModel):
 
 class LocalOcrExtractResponse(BaseModel):
     requestId: str
-    provider: LocalOcrProvider
     status: LocalOcrStatus
     text: str
     textFound: bool
