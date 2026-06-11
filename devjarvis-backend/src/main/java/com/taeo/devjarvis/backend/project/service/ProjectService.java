@@ -22,13 +22,31 @@ public class ProjectService {
     @Transactional
     public ProjectResponse create(ProjectCreateRequest request) {
         String normalizedName = request.name().trim();
+        String normalizedRootPathAlias = normalizeBlankToNull(request.rootPathAlias());
+
+        if (normalizedRootPathAlias != null) {
+            Project existing = projectRepository
+                    .findFirstByRootPathAliasAndStatus(normalizedRootPathAlias, ProjectStatus.ACTIVE)
+                    .orElse(null);
+            if (existing != null) {
+                return ProjectResponse.from(existing);
+            }
+        }
+
+        Project existingByName = projectRepository
+                .findFirstByNameIgnoreCaseAndStatus(normalizedName, ProjectStatus.ACTIVE)
+                .orElse(null);
+        if (existingByName != null) {
+            return ProjectResponse.from(existingByName);
+        }
+
         if (projectRepository.existsByNameIgnoreCase(normalizedName)) {
-            throw new IllegalArgumentException("이미 등록된 프로젝트명입니다: " + normalizedName);
+            throw new IllegalArgumentException("PROJECT_NAME_CONFLICT");
         }
 
         Project project = Project.create(
                 normalizedName,
-                normalizeBlankToNull(request.rootPathAlias()),
+                normalizedRootPathAlias,
                 normalizeBlankToNull(request.description())
         );
 

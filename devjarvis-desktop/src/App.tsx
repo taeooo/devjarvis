@@ -447,10 +447,15 @@ function App() {
       if (selectedProject) {
         const summary = await refreshProjectManifest(selectedProject);
         projectScan = summary.scan;
-        messages.push(`Project refreshed · ${summary.registration.targetFileCount.toLocaleString()} files`);
-        metadata.manifestTargetFileCount = summary.registration.targetFileCount;
-        metadata.manifestExcludedFileCount = summary.registration.excludedFileCount;
+        const targetFileCount = summary.registration?.targetFileCount ?? summary.scan.summary.targetFileCount;
+        const excludedFileCount = summary.registration?.excludedFileCount ?? summary.scan.summary.excludedFileCount;
+        messages.push(summary.registration
+          ? `Project scanned · ${targetFileCount.toLocaleString()} files · backend synced`
+          : `Project scanned · ${targetFileCount.toLocaleString()} files · backend sync skipped`);
+        metadata.manifestTargetFileCount = targetFileCount;
+        metadata.manifestExcludedFileCount = excludedFileCount;
         metadata.projectContext = 'selected';
+        metadata.projectSyncStatus = summary.syncStatus;
       } else {
         messages.push('Project context not selected');
         metadata.projectContext = 'not_selected';
@@ -694,19 +699,27 @@ function App() {
     return mapLocalAgentAnalysisResponse(command, ocrResult, localResponse);
   }
 
-  async function refreshProjectManifest(projectContext: SelectedProject): Promise<{ registration: ManifestRegisterResponse; scan: ProjectScanResult }> {
+  async function refreshProjectManifest(projectContext: SelectedProject): Promise<{ registration: ManifestRegisterResponse | null; scan: ProjectScanResult; syncStatus: 'synced' | 'skipped' }> {
     const scanResult = await invoke<ProjectScanResult>('scan_project_manifest', { rootPath: projectContext.rootPath });
-    const project = registeredProject ?? await createProject({
-      name: scanResult.rootName || projectContext.name,
-      rootPathAlias: scanResult.rootPathAlias,
-      description: 'Desktop command context source.',
-    });
 
-    const summary = await registerProjectManifest(project.id, scanResult.files);
-    setRegisteredProject(project);
-    setLatestSummary(summary);
-    setLatestProjectScan(scanResult);
-    return { registration: summary, scan: scanResult };
+    try {
+      const project = registeredProject ?? await createProject({
+        name: scanResult.rootName || projectContext.name,
+        rootPathAlias: scanResult.rootPathAlias,
+        description: 'Desktop command context source.',
+      });
+
+      const summary = await registerProjectManifest(project.id, scanResult.files);
+      setRegisteredProject(project);
+      setLatestSummary(summary);
+      setLatestProjectScan(scanResult);
+      return { registration: summary, scan: scanResult, syncStatus: 'synced' };
+    } catch {
+      setRegisteredProject(null);
+      setLatestSummary(null);
+      setLatestProjectScan(scanResult);
+      return { registration: null, scan: scanResult, syncStatus: 'skipped' };
+    }
   }
 
   function resetStaleContextForCommand(command: CommandInput) {

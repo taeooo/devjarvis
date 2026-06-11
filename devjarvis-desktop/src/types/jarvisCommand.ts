@@ -79,8 +79,7 @@ export type CommandResultMetadata = {
   manifestTargetFileCount?: number;
   manifestExcludedFileCount?: number;
   projectContext?: 'selected' | 'not_selected';
-  projectManifestSyncStatus?: 'synced' | 'failed';
-  projectManifestSyncWarning?: string;
+  projectSyncStatus?: 'synced' | 'skipped';
   ocrProvider?: string;
   ocrStatus?: string;
   ocrTextLength?: number;
