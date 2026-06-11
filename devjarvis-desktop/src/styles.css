@@ -236,6 +236,7 @@ input:disabled {
 .jarvis-core-panel {
   position: relative;
   display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
   height: 100%;
   overflow: hidden;
@@ -284,15 +285,20 @@ input:disabled {
   position: relative;
   z-index: 1;
   display: grid;
-  place-items: center;
-  min-height: 100%;
-  padding: 3rem 2rem 6.7rem;
+  grid-template-rows: minmax(0, auto) auto;
+  align-content: center;
+  justify-items: center;
+  gap: clamp(0.9rem, 2vh, 1.45rem);
+  min-height: 0;
+  overflow: hidden;
+  padding: clamp(1.25rem, 3vh, 2.25rem) clamp(1rem, 2vw, 2rem);
 }
 
 .orb-shell {
   position: relative;
   display: grid;
-  width: min(42vw, 31rem);
+  width: clamp(13rem, min(31vw, 43vh), 25rem);
+  max-width: 78%;
   aspect-ratio: 1;
   place-items: center;
 }
@@ -337,12 +343,10 @@ input:disabled {
 }
 
 .core-readout {
-  position: absolute;
-  bottom: 2.5rem;
-  left: 50%;
+  position: relative;
   display: grid;
   width: min(86%, 34rem);
-  transform: translateX(-50%);
+  min-width: 0;
   place-items: center;
   text-align: center;
 }
@@ -361,12 +365,17 @@ input:disabled {
 }
 
 .core-readout strong {
+  display: block;
+  width: 100%;
   margin-top: 0.28rem;
+  overflow: hidden;
   color: #f0fdff;
-  font-size: clamp(2rem, 5vw, 4rem);
+  font-size: clamp(1.45rem, 2.75vw, 2.65rem);
   font-weight: 950;
-  letter-spacing: -0.065em;
+  letter-spacing: -0.055em;
+  text-overflow: ellipsis;
   text-shadow: 0 0 28px rgba(103, 232, 249, 0.36);
+  white-space: nowrap;
 }
 
 .waveform {
@@ -375,8 +384,8 @@ input:disabled {
   justify-content: center;
   gap: 0.28rem;
   width: 100%;
-  height: 2.6rem;
-  margin-top: 0.8rem;
+  height: 2.1rem;
+  margin-top: 0.65rem;
 }
 
 .waveform span {
@@ -389,11 +398,11 @@ input:disabled {
 }
 
 .command-readout {
-  position: absolute;
-  right: 1.3rem;
-  bottom: 1.3rem;
-  left: 1.3rem;
+  position: relative;
   z-index: 2;
+  max-height: 7.4rem;
+  margin: 0 1.3rem 1.3rem;
+  overflow: hidden;
   border-radius: 1.25rem;
   padding: 0.9rem 1rem;
 }
@@ -411,9 +420,14 @@ input:disabled {
 }
 
 .command-readout p {
+  display: -webkit-box;
   margin: 0.45rem 0 0;
+  overflow: hidden;
   font-size: 0.82rem;
   font-weight: 750;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .readout-message {
@@ -693,6 +707,10 @@ input:disabled {
     min-height: 560px;
   }
 
+  .orb-shell {
+    width: clamp(12rem, 38vw, 21rem);
+  }
+
   .side-stack {
     display: grid;
     grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
@@ -726,7 +744,15 @@ input:disabled {
   }
 
   .core-stage {
-    padding-inline: 1rem;
+    padding: 1rem;
+  }
+
+  .core-readout strong {
+    font-size: clamp(1.25rem, 8vw, 2rem);
+  }
+
+  .command-readout {
+    margin: 0 0.8rem 0.8rem;
   }
 
   .command-input-bar {
@@ -776,7 +802,8 @@ input:disabled {
   display: grid;
   gap: 0.55rem;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
+  padding-right: 0.15rem;
 }
 
 .empty-result,
@@ -797,6 +824,20 @@ input:disabled {
   display: grid;
   gap: 0.34rem;
   padding: 0.72rem;
+}
+
+.result-group {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.result-group-label {
+  color: #67e8f9;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
 }
 
 .result-card strong {

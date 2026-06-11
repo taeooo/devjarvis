@@ -55,6 +55,13 @@ type PipelineExecutionSummary = {
   stage: CommandPipelineStage;
 };
 
+type ProjectManifestRefreshResult = {
+  scan: ProjectScanResult;
+  registration: ManifestRegisterResponse | null;
+  syncStatus: 'synced' | 'failed';
+  syncWarning: string | null;
+};
+
 type LocalAssistantReadiness = {
   ready: boolean;
   appReady: boolean;
@@ -65,6 +72,7 @@ type LocalAssistantReadiness = {
 };
 
 const MAX_RESULT_HISTORY = 8;
+const PROJECT_CONTEXT_DESCRIPTION = 'Desktop command context source.';
 
 const initialScreenTarget: ScreenTargetSnapshot = {
   kind: 'not_selected',
@@ -340,7 +348,9 @@ function App() {
   }
 
   async function handleTextCommandSubmit(text: string) {
-    const command = createCommandInput(text, 'text');
+    const command = createCommandInput(text, 'text', {
+      projectSelected: selectedProject !== null,
+    });
     const plan = createCommandPlan(command);
     const startedResult: CommandResult = {
       id: createClientId(),
@@ -440,14 +450,25 @@ function App() {
     }
 
     if (plan.needsProjectManifest || shouldUseProjectForScreenDiagnosis) {
-      updateProcessingStage(plan.command.id, 'refreshing_manifest', shouldUseProjectForScreenDiagnosis ? 'Preparing project context' : 'Refreshing project manifest');
+      updateProcessingStage(
+        plan.command.id,
+        'refreshing_manifest',
+        shouldUseProjectForScreenDiagnosis ? 'Preparing project context' : 'Reading project manifest',
+      );
       if (selectedProject) {
-        const summary = await refreshProjectManifest(selectedProject);
-        projectScan = summary.scan;
-        messages.push(`Project refreshed · ${summary.registration.targetFileCount.toLocaleString()} files`);
-        metadata.manifestTargetFileCount = summary.registration.targetFileCount;
-        metadata.manifestExcludedFileCount = summary.registration.excludedFileCount;
+        const refreshResult = await refreshProjectManifest(selectedProject);
+        projectScan = refreshResult.scan;
+        messages.push(`Project scanned · ${refreshResult.scan.summary.targetFileCount.toLocaleString()} files`);
+        if (refreshResult.syncStatus === 'failed') {
+          messages.push('Backend manifest sync skipped');
+        }
+        metadata.manifestTargetFileCount = refreshResult.scan.summary.targetFileCount;
+        metadata.manifestExcludedFileCount = refreshResult.scan.summary.excludedFileCount;
         metadata.projectContext = 'selected';
+        metadata.projectManifestSyncStatus = refreshResult.syncStatus;
+        if (refreshResult.syncWarning) {
+          metadata.projectManifestSyncWarning = refreshResult.syncWarning;
+        }
       } else {
         messages.push('Project context not selected');
         metadata.projectContext = 'not_selected';
@@ -691,19 +712,43 @@ function App() {
     return mapLocalAgentAnalysisResponse(command, ocrResult, localResponse);
   }
 
-  async function refreshProjectManifest(projectContext: SelectedProject): Promise<{ registration: ManifestRegisterResponse; scan: ProjectScanResult }> {
+  async function refreshProjectManifest(projectContext: SelectedProject): Promise<ProjectManifestRefreshResult> {
     const scanResult = await invoke<ProjectScanResult>('scan_project_manifest', { rootPath: projectContext.rootPath });
-    const project = registeredProject ?? await createProject({
-      name: scanResult.rootName || projectContext.name,
-      rootPathAlias: scanResult.rootPathAlias,
-      description: 'Desktop command context source.',
-    });
-
-    const summary = await registerProjectManifest(project.id, scanResult.files);
-    setRegisteredProject(project);
-    setLatestSummary(summary);
     setLatestProjectScan(scanResult);
-    return { registration: summary, scan: scanResult };
+
+    const syncResult = await syncProjectManifestToBackend(projectContext, scanResult);
+    if (syncResult.registration) {
+      setLatestSummary(syncResult.registration);
+    }
+
+    return {
+      scan: scanResult,
+      registration: syncResult.registration,
+      syncStatus: syncResult.syncStatus,
+      syncWarning: syncResult.syncWarning,
+    };
+  }
+
+  async function syncProjectManifestToBackend(
+    projectContext: SelectedProject,
+    scanResult: ProjectScanResult,
+  ): Promise<{ registration: ManifestRegisterResponse | null; syncStatus: 'synced' | 'failed'; syncWarning: string | null }> {
+    try {
+      const project = registeredProject ?? await createProject({
+        name: scanResult.rootName || projectContext.name,
+        rootPathAlias: scanResult.rootPathAlias,
+        description: PROJECT_CONTEXT_DESCRIPTION,
+      });
+      const summary = await registerProjectManifest(project.id, scanResult.files);
+      setRegisteredProject(project);
+      return { registration: summary, syncStatus: 'synced', syncWarning: null };
+    } catch (caught) {
+      return {
+        registration: null,
+        syncStatus: 'failed',
+        syncWarning: normalizeBackendSyncWarning(caught),
+      };
+    }
   }
 
   function resetStaleContextForCommand(command: CommandInput) {
@@ -836,6 +881,19 @@ function buildFailureNextStep(message: string): string {
   }
 
   return 'Check permission or command context';
+}
+
+function normalizeBackendSyncWarning(caught: unknown): string {
+  const message = toErrorMessage(caught).trim();
+  if (!message) {
+    return 'BACKEND_MANIFEST_SYNC_FAILED';
+  }
+
+  if (message.length > 160) {
+    return `${message.slice(0, 157)}...`;
+  }
+
+  return message;
 }
 
 function summarizeProjectManifestForLocalAnalysis(scanResult: ProjectScanResult): string {

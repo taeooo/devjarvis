@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 
 @Service
 public class ProjectService {
@@ -22,13 +24,28 @@ public class ProjectService {
     @Transactional
     public ProjectResponse create(ProjectCreateRequest request) {
         String normalizedName = request.name().trim();
-        if (projectRepository.existsByNameIgnoreCase(normalizedName)) {
-            throw new IllegalArgumentException("이미 등록된 프로젝트명입니다: " + normalizedName);
+        String normalizedRootPathAlias = normalizeBlankToNull(request.rootPathAlias());
+
+        Optional<Project> existingByAlias = normalizedRootPathAlias == null
+                ? Optional.empty()
+                : projectRepository.findFirstByRootPathAliasAndStatus(normalizedRootPathAlias, ProjectStatus.ACTIVE);
+        if (existingByAlias.isPresent()) {
+            return ProjectResponse.from(existingByAlias.get());
+        }
+
+        Optional<Project> existingByName = projectRepository.findByNameIgnoreCase(normalizedName);
+        if (existingByName.isPresent()) {
+            Project existing = existingByName.get();
+            if (existing.getStatus() == ProjectStatus.ACTIVE
+                    && Objects.equals(existing.getRootPathAlias(), normalizedRootPathAlias)) {
+                return ProjectResponse.from(existing);
+            }
+            throw new IllegalArgumentException("PROJECT_NAME_CONFLICT");
         }
 
         Project project = Project.create(
                 normalizedName,
-                normalizeBlankToNull(request.rootPathAlias()),
+                normalizedRootPathAlias,
                 normalizeBlankToNull(request.description())
         );
 
