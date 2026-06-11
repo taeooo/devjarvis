@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     ocr_max_height: int = Field(default=4096)
     ocr_slow_warning_millis: int = Field(default=5000)
 
+    stt_provider: str = Field(default="placeholder")
+    stt_max_audio_bytes: int = Field(default=12_000_000)
+
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: [
             # Tauri production/custom-protocol origins. Keep exact origins only; do not
@@ -60,6 +63,14 @@ class Settings(BaseSettings):
         normalized = value.strip()
         if not normalized:
             raise ValueError("host must not be empty")
+        return normalized
+
+    @field_validator("stt_provider")
+    @classmethod
+    def validate_stt_provider(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized != "placeholder":
+            raise ValueError("stt_provider must be placeholder")
         return normalized
 
     @field_validator("ocr_provider")

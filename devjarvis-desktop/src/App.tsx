@@ -15,9 +15,16 @@ import {
   getLocalAgentAppHealth,
   getLocalAgentHealth,
   getLocalOcrHealth,
+  getLocalSttHealth,
+  transcribeWithLocalAgent,
 } from './api/localAgentClient';
 import { notifyCommandResult } from './utils/nativeWindow';
 import { createClientId, createCommandInput, createCommandPlan } from './utils/commandRouter';
+import {
+  buildProjectAwareScreenDiagnosis,
+  formatProjectDiagnosisContext,
+  type ProjectAwareScreenDiagnosis,
+} from './utils/projectScreenDiagnosis';
 import { captureScreenFrame, isScreenCaptureSupported } from './utils/screenCapture';
 import type {
   CommandInput,
@@ -33,18 +40,13 @@ import type {
   ScreenOcrResponse,
   ScreenTargetSnapshot,
   SystemStatus,
+  VoiceState,
 } from './types/jarvisCommand';
 import type { ManifestRegisterResponse, ProjectResponse, ProjectScanResult } from './types/projectScanner';
 
 type SelectedProject = {
   rootPath: string;
   name: string;
-};
-
-type ProjectManifestSnapshot = {
-  projectName: string;
-  scan: ProjectScanResult;
-  registration: ManifestRegisterResponse;
 };
 
 type PipelineExecutionSummary = {
@@ -100,12 +102,13 @@ function App() {
   const [selectedProject, setSelectedProject] = useState<SelectedProject | null>(null);
   const [registeredProject, setRegisteredProject] = useState<ProjectResponse | null>(null);
   const [latestSummary, setLatestSummary] = useState<ManifestRegisterResponse | null>(null);
+  const [latestProjectScan, setLatestProjectScan] = useState<ProjectScanResult | null>(null);
   const [micAvailable, setMicAvailable] = useState<boolean | null>(null);
+  const [voiceState, setVoiceState] = useState<VoiceState>('idle');
   const [screenContext, setScreenContext] = useState<ScreenContextSnapshot>(initialScreenContext);
   const [localAgentHealth, setLocalAgentHealth] = useState<LocalAgentHealthSnapshot>(initialLocalAgentHealth);
   const [isSelectingProject, setIsSelectingProject] = useState(false);
   const [isProcessingCommand, setIsProcessingCommand] = useState(false);
-  const [commandPhaseLabel, setCommandPhaseLabel] = useState('Ready for text');
   const [lastCommand, setLastCommand] = useState<CommandInput | null>(null);
   const [commandResults, setCommandResults] = useState<CommandResult[]>([]);
   const [systemMessage, setSystemMessage] = useState<string | null>(null);
@@ -119,6 +122,7 @@ function App() {
       if (!navigator.mediaDevices?.enumerateDevices) {
         if (!cancelled) {
           setMicAvailable(false);
+          setVoiceState('unavailable');
         }
         return;
       }
@@ -128,10 +132,12 @@ function App() {
         const hasMicrophone = devices.some((device) => device.kind === 'audioinput');
         if (!cancelled) {
           setMicAvailable(hasMicrophone);
+          setVoiceState((current) => (hasMicrophone ? current : 'unavailable'));
         }
       } catch {
         if (!cancelled) {
           setMicAvailable(false);
+          setVoiceState('unavailable');
         }
       }
     }
@@ -195,7 +201,7 @@ function App() {
     {
       key: 'screen',
       label: 'Screen',
-      value: formatScreenContextValue(screenContext),
+      value: formatScreenContextValue(screenContext, isProcessingCommand, lastCommand),
       tone: screenContext.state === 'captured'
         ? 'ready'
         : screenContext.state === 'capturing'
@@ -223,8 +229,12 @@ function App() {
     {
       key: 'voice',
       label: 'Voice',
-      value: 'Coming soon',
-      tone: 'idle',
+      value: formatVoiceContextValue(voiceState),
+      tone: voiceState === 'processing' || voiceState === 'recording'
+        ? 'active'
+        : voiceState === 'error' || voiceState === 'unavailable'
+          ? 'warning'
+          : 'idle',
     },
     {
       key: 'rag',
@@ -232,7 +242,7 @@ function App() {
       value: selectedProject ? 'Project' : 'None',
       tone: selectedProject ? 'ready' : 'idle',
     },
-  ]), [screenContext, selectedProject, localAgentHealth.state]);
+  ]), [screenContext, selectedProject, localAgentHealth.state, isProcessingCommand, lastCommand, voiceState]);
 
   async function refreshLocalAssistantReadiness(): Promise<LocalAssistantReadiness> {
     setLocalAgentHealth((current) => ({
@@ -284,11 +294,47 @@ function App() {
       });
       setRegisteredProject(null);
       setLatestSummary(null);
+      setLatestProjectScan(null);
       setSystemMessage('Project context selected.');
     } catch (caught) {
       setErrorMessage(toErrorMessage(caught));
     } finally {
       setIsSelectingProject(false);
+    }
+  }
+
+  async function handlePushToTalk() {
+    setSystemMessage(null);
+    setErrorMessage(null);
+
+    if (micAvailable === false) {
+      setVoiceState('unavailable');
+      setErrorMessage('Voice input requires a local microphone.');
+      return;
+    }
+
+    setVoiceState('processing');
+    try {
+      await ensureLocalAssistantReady();
+      const health = await getLocalSttHealth();
+      if (!health.available) {
+        setVoiceState('idle');
+        setSystemMessage(health.warning ?? 'Local STT is not configured yet.');
+        return;
+      }
+
+      const response = await transcribeWithLocalAgent({ commandId: createClientId(), audio: null });
+      if (response.textReady && response.text.trim().length > 0) {
+        setVoiceState('text_ready');
+        await handleTextCommandSubmit(response.text);
+        return;
+      }
+
+      setVoiceState('idle');
+      setSystemMessage(response.warnings[0] ?? 'Local STT did not return text.');
+    } catch (caught) {
+      setVoiceState('error');
+      setErrorMessage(toErrorMessage(caught));
     }
   }
 
@@ -309,23 +355,19 @@ function App() {
       displayMode: 'notify',
     };
 
-    if (!plan.needsScreenCapture) {
-      resetScreenContextForNonScreenCommand();
-    }
-
     setLastCommand(command);
-    setCommandPhaseLabel(plan.pendingSummary);
     upsertCommandResult(startedResult);
     setSystemMessage(null);
     setErrorMessage(null);
     setIsProcessingCommand(true);
+    resetStaleContextForCommand(command);
 
     try {
       const execution = await executePipeline(plan);
       const completedResult: CommandResult = {
         ...startedResult,
         title: plan.title,
-        summary: buildCompletedSummary(execution, plan.readySummary),
+        summary: execution.messages.length > 0 ? execution.messages.join(' · ') : plan.readySummary,
         detail: command.text,
         nextStep: plan.nextStep,
         metadata: execution.metadata,
@@ -336,7 +378,6 @@ function App() {
       };
 
       upsertCommandResult(completedResult);
-      setCommandPhaseLabel('Done');
       setSystemMessage(completedResult.summary);
       void notifyCommandResult(completedResult);
     } catch (caught) {
@@ -354,7 +395,6 @@ function App() {
       };
 
       upsertCommandResult(failedResult);
-      setCommandPhaseLabel('Failed');
       setErrorMessage(message);
       void notifyCommandResult(failedResult);
       return;
@@ -368,14 +408,19 @@ function App() {
     const messages: string[] = [];
     const metadata: NonNullable<CommandResult['metadata']> = {};
     let stage: CommandPipelineStage = 'completed';
+    let captured: ScreenCaptureResult | null = null;
+    let ocrResult: ScreenOcrResponse | null = null;
+    let projectScan: ProjectScanResult | null = null;
+    let projectDiagnosis: ProjectAwareScreenDiagnosis | null = null;
+    const shouldUseProjectForScreenDiagnosis = plan.command.intent === 'screen_error_analysis' && selectedProject !== null;
 
     if (plan.needsScreenCapture) {
-      updateProcessingStage(plan.command.id, 'checking_local_assistant', 'Checking local assistant');
+      updateProcessingStage(plan.command.id, 'received', 'Checking local assistant');
       await ensureLocalAssistantReady();
 
-      updateProcessingStage(plan.command.id, 'waiting_screen_target', 'Waiting for screen selection');
+      updateProcessingStage(plan.command.id, 'waiting_for_screen_selection', 'Waiting for screen selection');
       updateProcessingStage(plan.command.id, 'capturing_screen', 'Capturing selected screen');
-      const captured = await refreshScreenContext(plan.command);
+      captured = await refreshScreenContext(plan.command);
       const screenSize = `${captured.width}×${captured.height}`;
       messages.push(`Screen captured · ${screenSize}`);
       metadata.screenSize = screenSize;
@@ -384,17 +429,43 @@ function App() {
       metadata.screenTargetPolicy = resolvedTarget.policy;
 
       updateProcessingStage(plan.command.id, 'extracting_ocr', 'Reading screen text');
-      const ocrResult = await requestScreenOcr(plan.command, captured);
+      ocrResult = await requestScreenOcr(plan.command, captured);
       messages.push(formatOcrPipelineMessage(ocrResult));
       metadata.ocrTextFound = ocrResult.textFound;
       metadata.ocrTextLength = ocrResult.textLength;
+    }
 
-      updateProcessingStage(
-        plan.command.id,
-        plan.command.intent === 'screen_math_solver' ? 'solving_math' : 'analyzing_screen',
-        plan.command.intent === 'screen_math_solver' ? 'Solving math' : 'Thinking',
-      );
-      const analysisResult = await requestScreenAnalysis(plan.command, captured, ocrResult);
+    if (plan.needsProjectManifest || shouldUseProjectForScreenDiagnosis) {
+      updateProcessingStage(plan.command.id, 'refreshing_manifest', shouldUseProjectForScreenDiagnosis ? 'Preparing project context' : 'Refreshing project manifest');
+      if (selectedProject) {
+        const summary = await refreshProjectManifest(selectedProject);
+        projectScan = summary.scan;
+        messages.push(`Project refreshed · ${summary.registration.targetFileCount.toLocaleString()} files`);
+        metadata.manifestTargetFileCount = summary.registration.targetFileCount;
+        metadata.manifestExcludedFileCount = summary.registration.excludedFileCount;
+        metadata.projectContext = 'selected';
+      } else {
+        messages.push('Project context not selected');
+        metadata.projectContext = 'not_selected';
+      }
+      stage = 'analysis_ready';
+    }
+
+    if (captured && ocrResult) {
+      if (plan.command.intent === 'screen_math_solver') {
+        updateProcessingStage(plan.command.id, 'solving_math', 'Solving math');
+      } else {
+        updateProcessingStage(plan.command.id, 'analyzing_screen', shouldUseProjectForScreenDiagnosis ? 'Analyzing screen with project context' : 'Analyzing screen text');
+      }
+
+      if (shouldUseProjectForScreenDiagnosis && projectScan && ocrResult.textFound) {
+        projectDiagnosis = buildProjectAwareScreenDiagnosis(ocrResult.text, projectScan.files);
+        metadata.relatedProjectFiles = projectDiagnosis.relatedFiles;
+        metadata.projectAwareSignalCount = projectDiagnosis.signals.length;
+        metadata.projectAwareFileCandidateCount = projectDiagnosis.relatedFiles.length;
+      }
+
+      const analysisResult = await requestScreenAnalysis(plan.command, captured, ocrResult, projectDiagnosis);
       messages.push(formatAnalysisPipelineMessage(analysisResult));
       metadata.analysisTitle = analysisResult.title;
       metadata.analysisSummary = analysisResult.summary;
@@ -405,63 +476,38 @@ function App() {
       stage = 'analysis_ready';
     }
 
-    if (plan.needsProjectManifest) {
-      updateProcessingStage(plan.command.id, 'refreshing_manifest', 'Refreshing project manifest');
-      if (selectedProject) {
-        const snapshot = await refreshProjectManifest(selectedProject);
-        messages.push(`Project refreshed · ${snapshot.registration.targetFileCount.toLocaleString()} files`);
-        metadata.manifestTargetFileCount = snapshot.registration.targetFileCount;
-        metadata.manifestExcludedFileCount = snapshot.registration.excludedFileCount;
-        metadata.projectContext = 'selected';
-
-        updateProcessingStage(plan.command.id, 'analyzing_project', 'Analyzing project');
-        await ensureLocalReasoningReady();
-        const projectAnalysis = await requestProjectManifestAnalysis(plan.command, snapshot);
-        messages.push(projectAnalysis.summary);
-        metadata.projectAnalysisSummary = projectAnalysis.summary;
-        metadata.projectAnalysisDetail = projectAnalysis.detail ?? projectAnalysis.summary;
-        metadata.projectAnalysisActionItems = projectAnalysis.actionItems;
-        metadata.analysisSource = 'local_agent';
-      } else {
-        messages.push('Project context not selected');
-        metadata.projectContext = 'not_selected';
-      }
+    if (!plan.needsScreenCapture && plan.needsProjectManifest && selectedProject && projectScan) {
+      updateProcessingStage(plan.command.id, 'analyzing_project', 'Analyzing project');
+      await ensureLocalAssistantReady();
+      const analysis = await requestProjectAnalysis(plan.command, projectScan);
+      messages.push(analysis.summary);
+      metadata.analysisTitle = analysis.title;
+      metadata.analysisSummary = analysis.summary;
+      metadata.analysisDetail = analysis.detail;
+      metadata.analysisPreview = analysis.preview;
+      metadata.analysisActionItems = analysis.actionItems;
+      metadata.analysisSource = 'local_agent';
       stage = 'analysis_ready';
     }
 
     if (!plan.needsScreenCapture && !plan.needsProjectManifest) {
-      if (plan.command.intent === 'screen_math_solver') {
-        updateProcessingStage(plan.command.id, 'solving_math', 'Solving math');
-        await ensureLocalReasoningReady();
-        const response = await analyzeWithLocalAgent({
-          commandId: plan.command.id,
-          intent: plan.command.intent,
-          text: plan.command.text,
-          context: 'inputSource=text_command',
-        });
-        messages.push(response.summary);
-        metadata.analysisTitle = 'Calculation ready';
-        metadata.analysisSummary = response.summary;
-        metadata.analysisDetail = response.detail ?? response.summary;
-        metadata.analysisPreview = summarizePreview(response.summary, response.detail);
-        metadata.analysisActionItems = response.actionItems;
-        metadata.analysisSource = 'local_agent';
-        stage = 'analysis_ready';
-      } else {
-        updateProcessingStage(plan.command.id, 'thinking', 'Thinking');
-        messages.push('Command queued');
-      }
+      updateProcessingStage(plan.command.id, 'thinking', 'Thinking');
+      await ensureLocalAssistantReady();
+      const analysis = await requestTextAnalysis(plan.command);
+      messages.push(analysis.summary);
+      metadata.analysisTitle = analysis.title;
+      metadata.analysisSummary = analysis.summary;
+      metadata.analysisDetail = analysis.detail;
+      metadata.analysisPreview = analysis.preview;
+      metadata.analysisActionItems = analysis.actionItems;
+      metadata.analysisSource = 'local_agent';
+      stage = 'analysis_ready';
     }
 
-    return {
-      messages,
-      metadata,
-      stage,
-    };
+    return { messages, metadata, stage };
   }
 
   function updateProcessingStage(commandId: string, stage: CommandPipelineStage, summary: string) {
-    setCommandPhaseLabel(summary);
     setCommandResults((current) => current.map((result) => (
       result.commandId === commandId
         ? { ...result, pipelineStage: stage, summary }
@@ -575,6 +621,7 @@ function App() {
     command: CommandInput,
     captured: ScreenCaptureResult,
     ocrResult: ScreenOcrResponse,
+    projectDiagnosis: ProjectAwareScreenDiagnosis | null = null,
   ): Promise<ScreenAnalysisResponse> {
     setScreenContext((current) => ({
       ...current,
@@ -584,7 +631,7 @@ function App() {
     }));
 
     try {
-      const response = await requestLocalScreenAnalysis(command, captured, ocrResult);
+      const response = await requestLocalScreenAnalysis(command, captured, ocrResult, projectDiagnosis);
 
       setScreenContext((current) => ({
         ...current,
@@ -610,6 +657,7 @@ function App() {
     command: CommandInput,
     captured: ScreenCaptureResult,
     ocrResult: ScreenOcrResponse,
+    projectDiagnosis: ProjectAwareScreenDiagnosis | null,
   ): Promise<ScreenAnalysisResponse> {
     if (!ocrResult.textFound || ocrResult.text.trim().length === 0) {
       return {
@@ -632,13 +680,13 @@ function App() {
       commandId: command.id,
       intent: command.intent,
       text: ocrResult.text,
-      context: buildLocalAnalysisContext(command, captured, ocrResult),
+      context: buildLocalAnalysisContext(command, captured, ocrResult, projectDiagnosis),
     });
 
     return mapLocalAgentAnalysisResponse(command, ocrResult, localResponse);
   }
 
-  async function refreshProjectManifest(projectContext: SelectedProject): Promise<ProjectManifestSnapshot> {
+  async function refreshProjectManifest(projectContext: SelectedProject): Promise<{ registration: ManifestRegisterResponse; scan: ProjectScanResult }> {
     const scanResult = await invoke<ProjectScanResult>('scan_project_manifest', { rootPath: projectContext.rootPath });
     const project = registeredProject ?? await createProject({
       name: scanResult.rootName || projectContext.name,
@@ -649,30 +697,41 @@ function App() {
     const summary = await registerProjectManifest(project.id, scanResult.files);
     setRegisteredProject(project);
     setLatestSummary(summary);
-    return {
-      projectName: scanResult.rootName || projectContext.name,
-      scan: scanResult,
-      registration: summary,
-    };
+    setLatestProjectScan(scanResult);
+    return { registration: summary, scan: scanResult };
   }
 
-  async function requestProjectManifestAnalysis(
-    command: CommandInput,
-    snapshot: ProjectManifestSnapshot,
-  ): Promise<LocalLlmAnalyzeResponse> {
-    return analyzeWithLocalAgent({
-      commandId: command.id,
-      intent: 'project_diagnosis',
-      text: buildProjectManifestObservedText(snapshot),
-      context: buildProjectAnalysisContext(command),
-    });
-  }
+  function resetStaleContextForCommand(command: CommandInput) {
+    if (command.contextMode === 'screen' || command.contextMode === 'auto') return;
 
-  function resetScreenContextForNonScreenCommand() {
-    setScreenContext({
+    setScreenContext((current) => ({
       ...initialScreenContext,
-      state: isScreenCaptureSupported() ? 'ready' : 'unavailable',
+      state: current.state === 'unavailable' ? 'unavailable' : initialScreenContext.state,
+      target: initialScreenTarget,
+    }));
+  }
+
+  async function requestProjectAnalysis(command: CommandInput, scanResult: ProjectScanResult): Promise<ScreenAnalysisResponse> {
+    const summary = summarizeProjectManifestForLocalAnalysis(scanResult);
+    const response = await analyzeWithLocalAgent({
+      commandId: command.id,
+      intent: command.intent,
+      text: command.text,
+      context: summary,
     });
+
+    return mapLocalAgentAnalysisResponse(command, { textLength: summary.length } as ScreenOcrResponse, response);
+  }
+
+  async function requestTextAnalysis(command: CommandInput): Promise<ScreenAnalysisResponse> {
+    const response = await analyzeWithLocalAgent({
+      commandId: command.id,
+      intent: command.intent,
+      text: command.text,
+      context: null,
+    });
+
+    return mapLocalAgentAnalysisResponse(command, { textLength: command.text.length } as ScreenOcrResponse, response);
   }
 
   function upsertCommandResult(result: CommandResult) {
@@ -692,13 +751,17 @@ function App() {
             lastCommand={lastCommand}
             systemMessage={systemMessage}
             errorMessage={errorMessage}
-            commandPhaseLabel={commandPhaseLabel}
           />
           <CommandInputBar disabled={isProcessingCommand} onSubmit={handleTextCommandSubmit} />
         </div>
 
         <div className="side-stack">
-          <VoiceStatusPanel micAvailable={micAvailable} />
+          <VoiceStatusPanel
+            micAvailable={micAvailable}
+            voiceState={voiceState}
+            disabled={isProcessingCommand}
+            onPushToTalk={handlePushToTalk}
+          />
           <ContextStatusPanel
             items={contextItems}
             projectName={selectedProject?.name ?? null}
@@ -761,96 +824,6 @@ function getDefaultLocalAssistantSetupMessage(): string {
   return 'Local Assistant is not ready. Start the local services, then retry.';
 }
 
-
-async function ensureLocalReasoningReady(): Promise<void> {
-  const [appResult, llmResult] = await Promise.allSettled([
-    getLocalAgentAppHealth(),
-    getLocalAgentHealth(),
-  ]);
-
-  const appReady = appResult.status === 'fulfilled'
-    && appResult.value.status === 'UP'
-    && appResult.value.loopbackOnly === true;
-  const llmReady = llmResult.status === 'fulfilled' && llmResult.value.available === true;
-
-  if (!appReady) {
-    throw new Error('Local Assistant is not running. Start DevJarvis Local Agent, then retry.');
-  }
-
-  if (!llmReady) {
-    throw new Error('Local reasoning is not ready. Start Ollama and install the configured local models, then retry.');
-  }
-}
-
-function buildCompletedSummary(execution: PipelineExecutionSummary, fallback: string): string {
-  if (execution.metadata.projectAnalysisSummary) {
-    return execution.metadata.projectAnalysisSummary;
-  }
-
-  if (execution.metadata.analysisSummary) {
-    return execution.metadata.analysisSummary;
-  }
-
-  return execution.messages.length > 0 ? execution.messages.join(' · ') : fallback;
-}
-
-function buildProjectAnalysisContext(command: CommandInput): string {
-  const userRequest = command.text.length > 240 ? `${command.text.slice(0, 237)}...` : command.text;
-
-  return [
-    'inputSource=local_project_manifest',
-    'pathPolicy=no_absolute_path_no_root_alias',
-    `userRequest=${userRequest}`,
-  ].join('\n');
-}
-
-function buildProjectManifestObservedText(snapshot: ProjectManifestSnapshot): string {
-  const targetFiles = snapshot.scan.files.filter((file) => !file.excluded);
-  const excludedFiles = snapshot.scan.files.filter((file) => file.excluded);
-  const languageLines = summarizeBy(targetFiles, (file) => file.language || 'unknown')
-    .slice(0, 12)
-    .map(([language, count]) => `- ${language}: ${count}`);
-  const extensionLines = summarizeBy(targetFiles, (file) => file.extension || '(none)')
-    .slice(0, 12)
-    .map(([extension, count]) => `- ${extension}: ${count}`);
-  const exclusionLines = summarizeBy(excludedFiles, (file) => file.excludedReason ?? 'excluded')
-    .slice(0, 8)
-    .map(([reason, count]) => `- ${reason}: ${count}`);
-
-  return [
-    `Project name: ${snapshot.projectName}`,
-    `Requested files: ${snapshot.registration.requestedFileCount}`,
-    `Indexable files: ${snapshot.registration.targetFileCount}`,
-    `Excluded files: ${snapshot.registration.excludedFileCount}`,
-    `Sensitive files excluded: ${snapshot.scan.summary.sensitiveFileCount}`,
-    `Large files excluded: ${snapshot.scan.summary.largeFileCount}`,
-    `Generated/tooling files excluded: ${snapshot.scan.summary.generatedOrToolingFileCount}`,
-    '',
-    'Languages:',
-    ...withFallback(languageLines, '- none'),
-    '',
-    'Extensions:',
-    ...withFallback(extensionLines, '- none'),
-    '',
-    'Exclusion reasons:',
-    ...withFallback(exclusionLines, '- none'),
-  ].join('\n');
-}
-
-function summarizeBy<T>(items: T[], selector: (item: T) => string): [string, number][] {
-  const counts = new Map<string, number>();
-  for (const item of items) {
-    const key = selector(item).trim() || 'unknown';
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-
-  return [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
-}
-
-function withFallback(items: string[], fallback: string): string[] {
-  return items.length > 0 ? items : [fallback];
-}
-
 function buildFailureNextStep(message: string): string {
   if (message.toLowerCase().includes('local')) {
     return 'Start Local Agent and Ollama, then retry';
@@ -859,15 +832,60 @@ function buildFailureNextStep(message: string): string {
   return 'Check permission or command context';
 }
 
-function buildLocalAnalysisContext(command: CommandInput, captured: ScreenCaptureResult, ocrResult: ScreenOcrResponse): string {
-  const userRequest = command.text.length > 240 ? `${command.text.slice(0, 237)}...` : command.text;
+function summarizeProjectManifestForLocalAnalysis(scanResult: ProjectScanResult): string {
+  const activeFiles = scanResult.files.filter((file) => !file.excluded);
+  const languageCounts = new Map<string, number>();
+  const extensionCounts = new Map<string, number>();
+  const sampleFiles = activeFiles.slice(0, 80).map((file) => `${file.relativePath}\t${file.language}\t${file.extension}`);
+
+  for (const file of activeFiles) {
+    incrementCount(languageCounts, file.language || 'unknown');
+    incrementCount(extensionCounts, file.extension || 'none');
+  }
 
   return [
+    `projectRootName=${scanResult.rootName}`,
+    `requestedFileCount=${scanResult.summary.requestedFileCount}`,
+    `targetFileCount=${scanResult.summary.targetFileCount}`,
+    `excludedFileCount=${scanResult.summary.excludedFileCount}`,
+    `sensitiveFileCount=${scanResult.summary.sensitiveFileCount}`,
+    `[languageCounts]\n${formatCountMap(languageCounts)}`,
+    `[extensionCounts]\n${formatCountMap(extensionCounts)}`,
+    `[sampleRelativePaths]\n${sampleFiles.join('\n')}`,
+  ].join('\n');
+}
+
+function incrementCount(counts: Map<string, number>, key: string) {
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+function formatCountMap(counts: Map<string, number>): string {
+  return Array.from(counts.entries())
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 20)
+    .map(([key, count]) => `${key}=${count}`)
+    .join('\n');
+}
+
+function buildLocalAnalysisContext(
+  command: CommandInput,
+  captured: ScreenCaptureResult,
+  ocrResult: ScreenOcrResponse,
+  projectDiagnosis: ProjectAwareScreenDiagnosis | null = null,
+): string {
+  const userRequest = command.text.length > 240 ? `${command.text.slice(0, 237)}...` : command.text;
+  const baseContext = [
     `selectedScreenSize=${captured.width}x${captured.height}`,
     `readableTextLength=${ocrResult.textLength}`,
     `requestType=${formatLocalAgentTitle(command.intent)}`,
     `userRequest=${userRequest}`,
-  ].join('\n');
+  ];
+
+  if (projectDiagnosis) {
+    baseContext.push(formatProjectDiagnosisContext(projectDiagnosis));
+  }
+
+  return baseContext.join('\n');
 }
 
 function mapLocalAgentAnalysisResponse(
@@ -989,13 +1007,30 @@ function formatLocalAssistantContextValue(state: LocalAgentConnectionState): str
   return 'Setup needed';
 }
 
-function formatScreenContextValue(screenContext: ScreenContextSnapshot): string {
+function formatVoiceContextValue(state: VoiceState): string {
+  if (state === 'processing') return 'Processing';
+  if (state === 'recording') return 'Recording';
+  if (state === 'text_ready') return 'Text ready';
+  if (state === 'error') return 'Failed';
+  if (state === 'unavailable') return 'Unavailable';
+  return 'Push to talk';
+}
+
+function formatScreenContextValue(
+  screenContext: ScreenContextSnapshot,
+  isProcessing: boolean,
+  lastCommand: CommandInput | null,
+): string {
+  if (isProcessing && lastCommand && lastCommand.contextMode !== 'screen' && lastCommand.contextMode !== 'auto') {
+    return 'Idle';
+  }
+
   if (screenContext.state === 'capturing') {
     return 'Capturing';
   }
 
   if (screenContext.state === 'captured') {
-    return 'Last capture';
+    return 'Last captured';
   }
 
   if (screenContext.state === 'unavailable') {
