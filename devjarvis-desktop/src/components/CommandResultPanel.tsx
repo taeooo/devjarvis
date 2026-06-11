@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { CommandResult } from '../types/jarvisCommand';
 
-const MAX_HISTORY_RESULTS = 4;
+const MAX_RENDERED_HISTORY = 2;
 
 type CommandResultPanelProps = {
   results: CommandResult[];
@@ -10,7 +10,6 @@ type CommandResultPanelProps = {
 export function CommandResultPanel({ results }: CommandResultPanelProps) {
   const [selectedResult, setSelectedResult] = useState<CommandResult | null>(null);
   const [currentResult, ...historyResults] = results;
-  const visibleHistory = historyResults.slice(0, MAX_HISTORY_RESULTS);
 
   return (
     <aside className="result-panel" aria-label="Command results">
@@ -24,16 +23,15 @@ export function CommandResultPanel({ results }: CommandResultPanelProps) {
           <div className="empty-result">Waiting for command</div>
         ) : (
           <>
-            <section className="result-section" aria-label="Current command result">
-              <span className="result-section-label">Current</span>
+            <section className="result-group" aria-label="Current command result">
+              <span className="result-group-label">Current</span>
               <ResultCard result={currentResult} onOpen={() => setSelectedResult(currentResult)} />
             </section>
-
-            {visibleHistory.length > 0 && (
-              <section className="result-section result-history-section" aria-label="Previous command results">
-                <span className="result-section-label">History</span>
-                {visibleHistory.map((result) => (
-                  <ResultCard key={result.id} result={result} onOpen={() => setSelectedResult(result)} compact />
+            {historyResults.length > 0 && (
+              <section className="result-group" aria-label="Previous command results">
+                <span className="result-group-label">History</span>
+                {historyResults.slice(0, MAX_RENDERED_HISTORY).map((result) => (
+                  <ResultCard key={result.id} result={result} compact onOpen={() => setSelectedResult(result)} />
                 ))}
               </section>
             )}
@@ -50,14 +48,12 @@ export function CommandResultPanel({ results }: CommandResultPanelProps) {
 
 type ResultCardProps = {
   result: CommandResult;
-  onOpen: () => void;
   compact?: boolean;
+  onOpen: () => void;
 };
 
-function ResultCard({ result, onOpen, compact = false }: ResultCardProps) {
-  const title = getResultTitle(result);
-  const preview = getResultPreview(result);
-  const actionItems = getResultActionItems(result);
+function ResultCard({ result, compact = false, onOpen }: ResultCardProps) {
+  const relatedFiles = result.metadata?.relatedProjectFiles ?? [];
 
   return (
     <article className={`result-card result-${result.status} ${compact ? 'result-card-compact' : ''}`}>
@@ -67,18 +63,24 @@ function ResultCard({ result, onOpen, compact = false }: ResultCardProps) {
           {formatResultTime(result.completedAt ?? result.createdAt)}
         </time>
       </div>
-      <strong>{title}</strong>
-      <p>{preview}</p>
-      {!compact && actionItems.length > 0 && (
+      <strong>{result.metadata?.analysisTitle ?? result.title}</strong>
+      <p>{result.metadata?.analysisPreview ?? result.summary}</p>
+      {!compact && relatedFiles.length > 0 && (
+        <div className="related-file-preview">
+          <span>Related files</span>
+          <strong>{relatedFiles.length}</strong>
+        </div>
+      )}
+      {!compact && result.metadata?.analysisActionItems && result.metadata.analysisActionItems.length > 0 && (
         <ul className="result-action-list">
-          {actionItems.slice(0, 2).map((item) => (
+          {result.metadata.analysisActionItems.slice(0, 2).map((item) => (
             <li key={item}>{item}</li>
           ))}
         </ul>
       )}
       <div className="result-card-actions">
         <button type="button" onClick={onOpen}>
-          전문 보기
+          View detail
         </button>
       </div>
       {result.nextStep && result.status === 'failed' && <small>{result.nextStep}</small>}
@@ -92,10 +94,11 @@ type ResultDetailDialogProps = {
 };
 
 function ResultDetailDialog({ result, onClose }: ResultDetailDialogProps) {
-  const title = getResultTitle(result);
-  const summary = getResultSummary(result);
-  const detail = getResultDetail(result);
-  const actionItems = getResultActionItems(result);
+  const title = result.metadata?.analysisTitle ?? result.title;
+  const summary = result.metadata?.analysisSummary ?? result.summary;
+  const detail = result.metadata?.analysisDetail ?? result.detail ?? null;
+  const actionItems = result.metadata?.analysisActionItems ?? [];
+  const relatedFiles = result.metadata?.relatedProjectFiles ?? [];
   const timestamp = result.completedAt ?? result.createdAt;
 
   return (
@@ -114,34 +117,40 @@ function ResultDetailDialog({ result, onClose }: ResultDetailDialogProps) {
             <time dateTime={timestamp}>{formatResultTime(timestamp)}</time>
           </div>
           <button type="button" aria-label="Close result detail" onClick={onClose}>
-            닫기
+            Close
           </button>
         </div>
 
         <div className="result-detail-body">
           <section>
-            <h3>요약</h3>
+            <h3>Summary</h3>
             <p>{summary}</p>
           </section>
 
           {detail && detail.trim().length > 0 && detail.trim() !== summary.trim() && (
             <section>
-              <h3>{result.intent === 'screen_math_solver' ? '계산 풀이' : '상세 내용'}</h3>
-              {result.intent === 'screen_math_solver' ? (
-                <div className="math-solution-list">
-                  {detail.split('\n').filter(Boolean).map((line) => (
-                    <div className="math-solution-row" key={line}>{line}</div>
-                  ))}
-                </div>
-              ) : (
-                <pre>{detail}</pre>
-              )}
+              <h3>Detail</h3>
+              <pre>{formatDetailText(detail)}</pre>
+            </section>
+          )}
+
+          {relatedFiles.length > 0 && (
+            <section>
+              <h3>Related file candidates</h3>
+              <div className="related-file-list">
+                {relatedFiles.map((file) => (
+                  <div className="related-file-row" key={file.relativePath}>
+                    <code>{file.relativePath}</code>
+                    <span>{file.language || file.extension || 'file'}</span>
+                  </div>
+                ))}
+              </div>
             </section>
           )}
 
           {actionItems.length > 0 && (
             <section>
-              <h3>조치 항목</h3>
+              <h3>Next actions</h3>
               <ul>
                 {actionItems.map((item) => (
                   <li key={item}>{item}</li>
@@ -152,7 +161,7 @@ function ResultDetailDialog({ result, onClose }: ResultDetailDialogProps) {
 
           {result.detail && result.detail.trim().length > 0 && result.detail !== detail && (
             <section>
-              <h3>요청</h3>
+              <h3>Request</h3>
               <pre>{result.detail}</pre>
             </section>
           )}
@@ -162,53 +171,21 @@ function ResultDetailDialog({ result, onClose }: ResultDetailDialogProps) {
   );
 }
 
-function getResultTitle(result: CommandResult): string {
-  return result.metadata?.analysisTitle ?? result.title;
-}
-
-function getResultSummary(result: CommandResult): string {
-  return result.metadata?.projectAnalysisSummary
-    ?? result.metadata?.analysisSummary
-    ?? result.summary;
-}
-
-function getResultDetail(result: CommandResult): string | null {
-  return result.metadata?.projectAnalysisDetail
-    ?? result.metadata?.analysisDetail
-    ?? result.detail
-    ?? null;
-}
-
-function getResultPreview(result: CommandResult): string {
-  return result.metadata?.analysisPreview
-    ?? result.metadata?.projectAnalysisSummary
-    ?? result.metadata?.analysisSummary
-    ?? result.summary;
-}
-
-function getResultActionItems(result: CommandResult): string[] {
-  return result.metadata?.projectAnalysisActionItems
-    ?? result.metadata?.analysisActionItems
-    ?? [];
+function formatDetailText(detail: string): string {
+  return detail
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .join('\n');
 }
 
 function formatResultStatus(status: CommandResult['status']): string {
-  if (status === 'processing') {
-    return 'Processing';
-  }
-
-  if (status === 'failed') {
-    return 'Failed';
-  }
-
+  if (status === 'processing') return 'Processing';
+  if (status === 'failed') return 'Failed';
   return 'Completed';
 }
 
 function formatResultTime(value: string): string {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '--:--';
-  }
-
+  if (Number.isNaN(date.getTime())) return '--:--';
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
