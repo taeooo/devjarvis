@@ -7,6 +7,10 @@ import type {
   ScreenTargetPolicy,
 } from '../types/jarvisCommand';
 
+export type CommandRoutingHint = {
+  projectSelected?: boolean;
+};
+
 export type CommandExecutionPlan = {
   command: CommandInput;
   needsScreenCapture: boolean;
@@ -19,26 +23,29 @@ export type CommandExecutionPlan = {
   screenTargetPolicy: ScreenTargetPolicy;
 };
 
-export type CommandRoutingContext = {
-  projectSelected?: boolean;
-};
-
-type ExplicitCommand = 'screen' | 'project' | 'math' | 'translate' | 'summary' | 'log' | null;
+type CommandToken =
+  | 'screen'
+  | 'project'
+  | 'math'
+  | 'translate'
+  | 'summary'
+  | 'log'
+  | 'chat';
 
 export function createCommandInput(
   text: string,
   source: CommandSource,
-  routingContext: CommandRoutingContext = {},
+  hint: CommandRoutingHint = {},
 ): CommandInput {
   const normalized = text.trim();
-  const intent = inferCommandIntent(normalized, routingContext);
+  const intent = inferCommandIntent(normalized, hint);
 
   return {
     id: createClientId(),
     source,
     text: normalized,
     createdAt: new Date().toISOString(),
-    contextMode: inferContextMode(normalized, intent, routingContext),
+    contextMode: inferContextMode(normalized, intent, hint),
     intent,
   };
 }
@@ -88,91 +95,71 @@ export function formatScreenTargetPolicy(policy: ScreenTargetPolicy): string {
 export function inferContextMode(
   text: string,
   intent: CommandIntent = inferCommandIntent(text),
-  routingContext: CommandRoutingContext = {},
+  hint: CommandRoutingHint = {},
 ): ContextMode {
-  const normalized = normalize(text);
-  const explicit = getExplicitCommand(normalized);
-  const screenMatched = hasScreenReference(normalized) || explicit === 'screen';
-  const projectMatched = hasProjectReference(normalized) || explicit === 'project';
-  const inlineMathMatched = hasInlineArithmeticExpression(normalized);
+  const token = getCommandToken(text);
+  const inlineMathMatched = hasInlineArithmeticExpression(text);
 
-  if (explicit === 'project') {
-    return 'project';
-  }
-
-  if (explicit === 'screen' || explicit === 'translate' || explicit === 'summary') {
-    return 'screen';
+  switch (token) {
+    case 'screen':
+    case 'translate':
+    case 'summary':
+      return 'screen';
+    case 'project':
+      return 'project';
+    case 'math':
+      return inlineMathMatched ? 'general' : 'screen';
+    case 'log':
+      return hint.projectSelected ? 'project' : 'general';
+    case 'chat':
+      return 'general';
   }
 
   if (intent === 'screen_math_solver') {
-    if (screenMatched) {
-      return 'screen';
-    }
-    if (projectMatched && !inlineMathMatched) {
-      return 'project';
-    }
     return inlineMathMatched ? 'general' : 'screen';
   }
 
-  if (intent === 'screen_error_analysis') {
-    return projectMatched && routingContext.projectSelected ? 'auto' : 'screen';
-  }
-
-  if (intent === 'project_diagnosis' || intent === 'log_analysis') {
-    return screenMatched ? 'auto' : 'project';
-  }
-
-  if (screenMatched && projectMatched) {
-    return 'auto';
-  }
-
-  if (screenMatched) {
-    return 'screen';
-  }
-
-  if (projectMatched) {
+  if (intent === 'project_diagnosis') {
     return 'project';
+  }
+
+  if (intent === 'log_analysis') {
+    return hint.projectSelected ? 'project' : 'general';
   }
 
   return 'general';
 }
 
-export function inferCommandIntent(text: string, routingContext: CommandRoutingContext = {}): CommandIntent {
-  const normalized = normalize(text);
-  const explicit = getExplicitCommand(normalized);
-  const screenMatched = hasScreenReference(normalized) || explicit === 'screen';
-  const projectMatched = hasProjectReference(normalized) || explicit === 'project';
-  const mathMatched = hasMathSignal(normalized) || explicit === 'math';
+export function inferCommandIntent(text: string, hint: CommandRoutingHint = {}): CommandIntent {
+  const token = getCommandToken(text);
+  const inlineMathMatched = hasInlineArithmeticExpression(text);
 
-  if (explicit === 'project') {
-    return 'project_diagnosis';
+  switch (token) {
+    case 'screen':
+      return 'screen_error_analysis';
+    case 'translate':
+      return 'screen_translate';
+    case 'summary':
+      return 'screen_summary';
+    case 'math':
+      return 'screen_math_solver';
+    case 'project':
+      return 'project_diagnosis';
+    case 'log':
+      return 'log_analysis';
+    case 'chat':
+      return 'general_chat';
   }
 
-  if (explicit === 'log') {
-    return 'log_analysis';
-  }
-
-  if (mathMatched && (screenMatched || hasInlineArithmeticExpression(normalized) || !projectMatched)) {
+  if (inlineMathMatched) {
     return 'screen_math_solver';
   }
 
-  if (explicit === 'translate' || (screenMatched && hasTranslationSignal(normalized))) {
-    return 'screen_translate';
+  if (looksLikeRuntimeLog(text)) {
+    return 'log_analysis';
   }
 
-  if (explicit === 'summary' || (screenMatched && hasSummarySignal(normalized))) {
-    return 'screen_summary';
-  }
-
-  if (screenMatched) {
-    return 'screen_error_analysis';
-  }
-
-  if (projectMatched) {
-    return 'project_diagnosis';
-  }
-
-  if (routingContext.projectSelected && hasProjectFileReference(normalized)) {
+  if (hint.projectSelected) {
     return 'project_diagnosis';
   }
 
@@ -285,42 +272,26 @@ function resolveNextStep(intent: CommandIntent, contextMode: ContextMode): strin
   return 'Review the response';
 }
 
-function normalize(text: string): string {
-  return text.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-function getExplicitCommand(text: string): ExplicitCommand {
-  const match = text.match(/^\/(screen|project|math|translate|summary|log)(?=\s|$)/);
-  return match ? (match[1] as Exclude<ExplicitCommand, null>) : null;
-}
-
-function hasScreenReference(text: string): boolean {
-  return /(^|\s)(screen|window)(\s|$)/.test(text) || text.includes('화면');
-}
-
-function hasProjectReference(text: string): boolean {
-  return /(^|\s)(project|repo|repository)(\s|$)/.test(text) || text.includes('프로젝트');
-}
-
-function hasMathSignal(text: string): boolean {
-  return hasInlineArithmeticExpression(text)
-    || /(^|\s)(math|calculate|solve)(\s|$)/.test(text)
-    || text.includes('계산')
-    || text.includes('수식');
-}
-
-function hasTranslationSignal(text: string): boolean {
-  return /(^|\s)(translate|translation)(\s|$)/.test(text) || text.includes('번역');
-}
-
-function hasSummarySignal(text: string): boolean {
-  return /(^|\s)(summary|summarize)(\s|$)/.test(text) || text.includes('요약');
-}
-
-function hasProjectFileReference(text: string): boolean {
-  return /(^|[\s/\\])([\w.-]+\.(tsx?|jsx?|py|java|kt|rs|go|yml|yaml|json|toml|gradle|md))(\s|$)/.test(text);
+function getCommandToken(text: string): CommandToken | null {
+  const token = text.trim().match(/^\/([a-z][a-z0-9_-]*)(?:\s+|$)/i)?.[1]?.toLowerCase();
+  switch (token) {
+    case 'screen':
+    case 'project':
+    case 'math':
+    case 'translate':
+    case 'summary':
+    case 'log':
+    case 'chat':
+      return token;
+    default:
+      return null;
+  }
 }
 
 function hasInlineArithmeticExpression(text: string): boolean {
   return /\d+\s*[+\-−–*/×÷xX]\s*\d+/.test(text);
+}
+
+function looksLikeRuntimeLog(text: string): boolean {
+  return /\b(error|exception|traceback|stack\s*trace|failed|fatal|warn(?:ing)?|\bat\s+[\w.$]+\(|\d{3}\s+\w+\s+Error)\b/i.test(text);
 }

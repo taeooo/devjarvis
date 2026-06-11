@@ -9,11 +9,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
 
 @Service
 public class ProjectService {
+
+    private static final String PROJECT_NAME_CONFLICT_CODE = "PROJECT_NAME_CONFLICT";
 
     private final ProjectRepository projectRepository;
 
@@ -26,21 +26,17 @@ public class ProjectService {
         String normalizedName = request.name().trim();
         String normalizedRootPathAlias = normalizeBlankToNull(request.rootPathAlias());
 
-        Optional<Project> existingByAlias = normalizedRootPathAlias == null
-                ? Optional.empty()
-                : projectRepository.findFirstByRootPathAliasAndStatus(normalizedRootPathAlias, ProjectStatus.ACTIVE);
-        if (existingByAlias.isPresent()) {
-            return ProjectResponse.from(existingByAlias.get());
+        if (normalizedRootPathAlias != null) {
+            Project existingProject = projectRepository
+                    .findFirstByRootPathAliasAndStatus(normalizedRootPathAlias, ProjectStatus.ACTIVE)
+                    .orElse(null);
+            if (existingProject != null) {
+                return ProjectResponse.from(existingProject);
+            }
         }
 
-        Optional<Project> existingByName = projectRepository.findByNameIgnoreCase(normalizedName);
-        if (existingByName.isPresent()) {
-            Project existing = existingByName.get();
-            if (existing.getStatus() == ProjectStatus.ACTIVE
-                    && Objects.equals(existing.getRootPathAlias(), normalizedRootPathAlias)) {
-                return ProjectResponse.from(existing);
-            }
-            throw new IllegalArgumentException("PROJECT_NAME_CONFLICT");
+        if (projectRepository.existsByNameIgnoreCase(normalizedName)) {
+            throw new IllegalArgumentException(PROJECT_NAME_CONFLICT_CODE);
         }
 
         Project project = Project.create(
@@ -64,7 +60,7 @@ public class ProjectService {
     public ProjectResponse findById(Long projectId) {
         Project project = projectRepository.findById(projectId)
                 .filter(found -> found.getStatus() == ProjectStatus.ACTIVE)
-                .orElseThrow(() -> new IllegalArgumentException("프로젝트를 찾을 수 없습니다. projectId=" + projectId));
+                .orElseThrow(() -> new IllegalArgumentException("PROJECT_NOT_FOUND"));
 
         return ProjectResponse.from(project);
     }
