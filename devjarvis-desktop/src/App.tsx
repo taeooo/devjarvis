@@ -113,6 +113,7 @@ function App() {
   const [commandResults, setCommandResults] = useState<CommandResult[]>([]);
   const [systemMessage, setSystemMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [commandPhaseLabel, setCommandPhaseLabel] = useState('Ready for text');
   const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   useEffect(() => {
@@ -360,6 +361,7 @@ function App() {
     setSystemMessage(null);
     setErrorMessage(null);
     setIsProcessingCommand(true);
+    setCommandPhaseLabel('Thinking');
     resetStaleContextForCommand(command);
 
     try {
@@ -378,6 +380,7 @@ function App() {
       };
 
       upsertCommandResult(completedResult);
+      setCommandPhaseLabel('Done');
       setSystemMessage(completedResult.summary);
       void notifyCommandResult(completedResult);
     } catch (caught) {
@@ -395,6 +398,7 @@ function App() {
       };
 
       upsertCommandResult(failedResult);
+      setCommandPhaseLabel('Failed');
       setErrorMessage(message);
       void notifyCommandResult(failedResult);
       return;
@@ -508,6 +512,7 @@ function App() {
   }
 
   function updateProcessingStage(commandId: string, stage: CommandPipelineStage, summary: string) {
+    setCommandPhaseLabel(summary);
     setCommandResults((current) => current.map((result) => (
       result.commandId === commandId
         ? { ...result, pipelineStage: stage, summary }
@@ -751,6 +756,7 @@ function App() {
             lastCommand={lastCommand}
             systemMessage={systemMessage}
             errorMessage={errorMessage}
+            commandPhaseLabel={commandPhaseLabel}
           />
           <CommandInputBar disabled={isProcessingCommand} onSubmit={handleTextCommandSubmit} />
         </div>
