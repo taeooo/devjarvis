@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { CommandResult } from '../types/jarvisCommand';
 
-const MAX_HISTORY_RESULTS = 3;
+const MAX_HISTORY_RESULTS = 4;
 
 type CommandResultPanelProps = {
   results: CommandResult[];
@@ -9,8 +9,8 @@ type CommandResultPanelProps = {
 
 export function CommandResultPanel({ results }: CommandResultPanelProps) {
   const [selectedResult, setSelectedResult] = useState<CommandResult | null>(null);
-  const currentResult = results[0] ?? null;
-  const historyResults = results.slice(1, MAX_HISTORY_RESULTS + 1);
+  const [currentResult, ...historyResults] = results;
+  const visibleHistory = historyResults.slice(0, MAX_HISTORY_RESULTS);
 
   return (
     <aside className="result-panel" aria-label="Command results">
@@ -24,16 +24,18 @@ export function CommandResultPanel({ results }: CommandResultPanelProps) {
           <div className="empty-result">Waiting for command</div>
         ) : (
           <>
-            <ResultGroupLabel label="Current" />
-            <ResultCard result={currentResult} variant="current" onOpen={() => setSelectedResult(currentResult)} />
+            <section className="result-section" aria-label="Current command result">
+              <span className="result-section-label">Current</span>
+              <ResultCard result={currentResult} onOpen={() => setSelectedResult(currentResult)} />
+            </section>
 
-            {historyResults.length > 0 && (
-              <>
-                <ResultGroupLabel label="History" />
-                {historyResults.map((result) => (
-                  <ResultCard result={result} variant="history" key={result.id} onOpen={() => setSelectedResult(result)} />
+            {visibleHistory.length > 0 && (
+              <section className="result-section result-history-section" aria-label="Previous command results">
+                <span className="result-section-label">History</span>
+                {visibleHistory.map((result) => (
+                  <ResultCard key={result.id} result={result} onOpen={() => setSelectedResult(result)} compact />
                 ))}
-              </>
+              </section>
             )}
           </>
         )}
@@ -48,27 +50,28 @@ export function CommandResultPanel({ results }: CommandResultPanelProps) {
 
 type ResultCardProps = {
   result: CommandResult;
-  variant: 'current' | 'history';
   onOpen: () => void;
+  compact?: boolean;
 };
 
-function ResultCard({ result, variant, onOpen }: ResultCardProps) {
+function ResultCard({ result, onOpen, compact = false }: ResultCardProps) {
+  const title = getResultTitle(result);
+  const preview = getResultPreview(result);
+  const actionItems = getResultActionItems(result);
+
   return (
-    <article className={`result-card result-${result.status} result-card-${variant}`}>
+    <article className={`result-card result-${result.status} ${compact ? 'result-card-compact' : ''}`}>
       <div className="result-card-topline">
         <span>{formatResultStatus(result.status)}</span>
         <time dateTime={result.completedAt ?? result.createdAt}>
           {formatResultTime(result.completedAt ?? result.createdAt)}
         </time>
       </div>
-      <div className="result-card-title-row">
-        <strong>{result.metadata?.analysisTitle ?? result.title}</strong>
-        <em>{formatResultSource(result)}</em>
-      </div>
-      <p>{getResultPreview(result)}</p>
-      {variant === 'current' && result.metadata?.analysisActionItems && result.metadata.analysisActionItems.length > 0 && (
+      <strong>{title}</strong>
+      <p>{preview}</p>
+      {!compact && actionItems.length > 0 && (
         <ul className="result-action-list">
-          {result.metadata.analysisActionItems.slice(0, 2).map((item) => (
+          {actionItems.slice(0, 2).map((item) => (
             <li key={item}>{item}</li>
           ))}
         </ul>
@@ -83,27 +86,22 @@ function ResultCard({ result, variant, onOpen }: ResultCardProps) {
   );
 }
 
-function ResultGroupLabel({ label }: { label: string }) {
-  return <div className="result-group-label">{label}</div>;
-}
-
 type ResultDetailDialogProps = {
   result: CommandResult;
   onClose: () => void;
 };
 
 function ResultDetailDialog({ result, onClose }: ResultDetailDialogProps) {
-  const title = result.metadata?.analysisTitle ?? result.title;
-  const summary = result.metadata?.analysisSummary ?? result.summary;
-  const detail = result.metadata?.analysisDetail ?? result.detail ?? null;
-  const actionItems = result.metadata?.analysisActionItems ?? [];
+  const title = getResultTitle(result);
+  const summary = getResultSummary(result);
+  const detail = getResultDetail(result);
+  const actionItems = getResultActionItems(result);
   const timestamp = result.completedAt ?? result.createdAt;
-  const isMathResult = result.intent === 'screen_math_solver';
 
   return (
     <div className="result-detail-overlay" role="presentation" onClick={onClose}>
       <section
-        className={`result-detail-dialog ${isMathResult ? 'result-detail-math' : ''}`}
+        className="result-detail-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="result-detail-title"
@@ -111,7 +109,7 @@ function ResultDetailDialog({ result, onClose }: ResultDetailDialogProps) {
       >
         <div className="result-detail-header">
           <div>
-            <span>{formatResultStatus(result.status)} · {formatResultSource(result)}</span>
+            <span>{formatResultStatus(result.status)}</span>
             <h2 id="result-detail-title">{title}</h2>
             <time dateTime={timestamp}>{formatResultTime(timestamp)}</time>
           </div>
@@ -128,8 +126,16 @@ function ResultDetailDialog({ result, onClose }: ResultDetailDialogProps) {
 
           {detail && detail.trim().length > 0 && detail.trim() !== summary.trim() && (
             <section>
-              <h3>{isMathResult ? '계산 / 풀이 전체' : '상세 내용'}</h3>
-              {isMathResult ? <MathDetailTable detail={detail} /> : <pre>{detail}</pre>}
+              <h3>{result.intent === 'screen_math_solver' ? '계산 풀이' : '상세 내용'}</h3>
+              {result.intent === 'screen_math_solver' ? (
+                <div className="math-solution-list">
+                  {detail.split('\n').filter(Boolean).map((line) => (
+                    <div className="math-solution-row" key={line}>{line}</div>
+                  ))}
+                </div>
+              ) : (
+                <pre>{detail}</pre>
+              )}
             </section>
           )}
 
@@ -141,24 +147,6 @@ function ResultDetailDialog({ result, onClose }: ResultDetailDialogProps) {
                   <li key={item}>{item}</li>
                 ))}
               </ul>
-            </section>
-          )}
-
-          {result.metadata?.projectLanguageSummary && (
-            <section>
-              <h3>프로젝트 구조 힌트</h3>
-              <dl className="result-project-summary">
-                <div>
-                  <dt>Languages</dt>
-                  <dd>{result.metadata.projectLanguageSummary}</dd>
-                </div>
-                {result.metadata.projectDirectorySummary && (
-                  <div>
-                    <dt>Top-level</dt>
-                    <dd>{result.metadata.projectDirectorySummary}</dd>
-                  </div>
-                )}
-              </dl>
             </section>
           )}
 
@@ -174,55 +162,34 @@ function ResultDetailDialog({ result, onClose }: ResultDetailDialogProps) {
   );
 }
 
-function MathDetailTable({ detail }: { detail: string }) {
-  const rows = detail.split('\n').map((line) => line.trim()).filter(Boolean);
-
-  return (
-    <div className="math-detail-table">
-      {rows.map((line, index) => {
-        const [expression, ...resultParts] = line.split('=');
-        const result = resultParts.join('=').trim();
-        return (
-          <div className="math-detail-row" key={`${line}-${index}`}>
-            <span>{index + 1}</span>
-            <code>{result ? expression.trim() : line}</code>
-            {result && <strong>{result}</strong>}
-          </div>
-        );
-      })}
-    </div>
-  );
+function getResultTitle(result: CommandResult): string {
+  return result.metadata?.analysisTitle ?? result.title;
 }
 
-function getResultPreview(result: CommandResult): string {
-  if (result.status === 'processing') {
-    return result.summary;
-  }
-
-  return result.metadata?.analysisPreview
+function getResultSummary(result: CommandResult): string {
+  return result.metadata?.projectAnalysisSummary
     ?? result.metadata?.analysisSummary
     ?? result.summary;
 }
 
-function formatResultSource(result: CommandResult): string {
-  switch (result.metadata?.resultSource) {
-    case 'project':
-      return 'Project';
-    case 'screen_math':
-      return 'Math';
-    case 'screen':
-      return 'Screen';
-    case 'auto':
-      return 'Mixed';
-    case 'text':
-      return 'Text';
-    default:
-      return result.contextMode === 'project'
-        ? 'Project'
-        : result.intent === 'screen_math_solver'
-          ? 'Math'
-          : 'Command';
-  }
+function getResultDetail(result: CommandResult): string | null {
+  return result.metadata?.projectAnalysisDetail
+    ?? result.metadata?.analysisDetail
+    ?? result.detail
+    ?? null;
+}
+
+function getResultPreview(result: CommandResult): string {
+  return result.metadata?.analysisPreview
+    ?? result.metadata?.projectAnalysisSummary
+    ?? result.metadata?.analysisSummary
+    ?? result.summary;
+}
+
+function getResultActionItems(result: CommandResult): string[] {
+  return result.metadata?.projectAnalysisActionItems
+    ?? result.metadata?.analysisActionItems
+    ?? [];
 }
 
 function formatResultStatus(status: CommandResult['status']): string {
