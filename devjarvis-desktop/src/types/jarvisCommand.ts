@@ -1,6 +1,6 @@
 export type VoiceState = 'unavailable' | 'idle' | 'listening' | 'transcribing' | 'ready' | 'error';
 
-export type SystemStatus = 'Listening' | 'Mic unavailable' | 'Idle' | 'Processing';
+export type SystemStatus = 'Ready' | 'Setup needed' | 'Checking' | 'Processing';
 
 export type CommandSource = 'voice' | 'text';
 

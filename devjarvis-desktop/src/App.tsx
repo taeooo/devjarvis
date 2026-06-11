@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { AppShell } from './components/AppShell';
+import { AssistantGuideDialog } from './components/AssistantGuideDialog';
 import { CommandInput as CommandInputBar } from './components/CommandInput';
 import { CommandResultPanel } from './components/CommandResultPanel';
 import { ContextStatusPanel } from './components/ContextStatusPanel';
@@ -23,6 +24,7 @@ import type {
   CommandPipelineStage,
   CommandResult,
   ContextStatusItem,
+  LocalAgentConnectionState,
   LocalAgentHealthSnapshot,
   LocalLlmAnalyzeResponse,
   ScreenAnalysisResponse,
@@ -31,7 +33,6 @@ import type {
   ScreenOcrResponse,
   ScreenTargetSnapshot,
   SystemStatus,
-  VoiceState,
 } from './types/jarvisCommand';
 import type { ManifestRegisterResponse, ProjectResponse, ProjectScanResult } from './types/projectScanner';
 
@@ -93,7 +94,6 @@ function App() {
   const [selectedProject, setSelectedProject] = useState<SelectedProject | null>(null);
   const [registeredProject, setRegisteredProject] = useState<ProjectResponse | null>(null);
   const [latestSummary, setLatestSummary] = useState<ManifestRegisterResponse | null>(null);
-  const [voiceState, setVoiceState] = useState<VoiceState>('idle');
   const [micAvailable, setMicAvailable] = useState<boolean | null>(null);
   const [screenContext, setScreenContext] = useState<ScreenContextSnapshot>(initialScreenContext);
   const [localAgentHealth, setLocalAgentHealth] = useState<LocalAgentHealthSnapshot>(initialLocalAgentHealth);
@@ -103,6 +103,7 @@ function App() {
   const [commandResults, setCommandResults] = useState<CommandResult[]>([]);
   const [systemMessage, setSystemMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,7 +112,6 @@ function App() {
       if (!navigator.mediaDevices?.enumerateDevices) {
         if (!cancelled) {
           setMicAvailable(false);
-          setVoiceState('unavailable');
         }
         return;
       }
@@ -121,12 +121,10 @@ function App() {
         const hasMicrophone = devices.some((device) => device.kind === 'audioinput');
         if (!cancelled) {
           setMicAvailable(hasMicrophone);
-          setVoiceState(hasMicrophone ? 'listening' : 'unavailable');
         }
       } catch {
         if (!cancelled) {
           setMicAvailable(false);
-          setVoiceState('unavailable');
         }
       }
     }
@@ -174,14 +172,17 @@ function App() {
     if (isProcessingCommand) {
       return 'Processing';
     }
-    if (voiceState === 'unavailable') {
-      return 'Mic unavailable';
+
+    if (localAgentHealth.state === 'checking') {
+      return 'Checking';
     }
-    if (voiceState === 'listening') {
-      return 'Listening';
+
+    if (localAgentHealth.state === 'ready') {
+      return 'Ready';
     }
-    return 'Idle';
-  }, [isProcessingCommand, voiceState]);
+
+    return 'Setup needed';
+  }, [isProcessingCommand, localAgentHealth.state]);
 
   const contextItems = useMemo<ContextStatusItem[]>(() => ([
     {
@@ -203,10 +204,20 @@ function App() {
       tone: selectedProject ? 'ready' : 'idle',
     },
     {
+      key: 'localAgent',
+      label: 'Assistant',
+      value: formatLocalAssistantContextValue(localAgentHealth.state),
+      tone: localAgentHealth.state === 'ready'
+        ? 'ready'
+        : localAgentHealth.state === 'checking'
+          ? 'active'
+          : 'warning',
+    },
+    {
       key: 'voice',
       label: 'Voice',
-      value: voiceState === 'unavailable' ? 'Unavailable' : voiceState === 'listening' ? 'Listening' : 'Idle',
-      tone: voiceState === 'unavailable' ? 'warning' : voiceState === 'listening' ? 'active' : 'idle',
+      value: 'Coming soon',
+      tone: 'idle',
     },
     {
       key: 'rag',
@@ -214,7 +225,7 @@ function App() {
       value: selectedProject ? 'Project' : 'None',
       tone: selectedProject ? 'ready' : 'idle',
     },
-  ]), [screenContext, selectedProject, voiceState]);
+  ]), [screenContext, selectedProject, localAgentHealth.state]);
 
   async function refreshLocalAssistantReadiness(): Promise<LocalAssistantReadiness> {
     setLocalAgentHealth((current) => ({
@@ -296,7 +307,6 @@ function App() {
     setSystemMessage(null);
     setErrorMessage(null);
     setIsProcessingCommand(true);
-    setVoiceState((current) => (current === 'unavailable' ? current : 'transcribing'));
 
     try {
       const execution = await executePipeline(plan);
@@ -332,14 +342,12 @@ function App() {
 
       upsertCommandResult(failedResult);
       setErrorMessage(message);
-      setVoiceState((current) => (current === 'unavailable' ? current : 'error'));
       void notifyCommandResult(failedResult);
       return;
     } finally {
       setIsProcessingCommand(false);
     }
 
-    setVoiceState((current) => (current === 'unavailable' ? current : 'listening'));
   }
 
   async function executePipeline(plan: ReturnType<typeof createCommandPlan>): Promise<PipelineExecutionSummary> {
@@ -603,11 +611,11 @@ function App() {
   }
 
   return (
-    <AppShell status={systemStatus}>
+    <AppShell status={systemStatus} onOpenGuide={() => setIsGuideOpen(true)}>
       <section className="command-shell-layout">
         <div className="main-command-zone">
           <JarvisCore
-            voiceState={voiceState}
+            assistantState={localAgentHealth.state}
             isProcessing={isProcessingCommand}
             lastCommand={lastCommand}
             systemMessage={systemMessage}
@@ -617,7 +625,7 @@ function App() {
         </div>
 
         <div className="side-stack">
-          <VoiceStatusPanel voiceState={voiceState} micAvailable={micAvailable} />
+          <VoiceStatusPanel micAvailable={micAvailable} />
           <ContextStatusPanel
             items={contextItems}
             projectName={selectedProject?.name ?? null}
@@ -628,6 +636,7 @@ function App() {
           <CommandResultPanel results={commandResults} />
         </div>
       </section>
+      {isGuideOpen && <AssistantGuideDialog onClose={() => setIsGuideOpen(false)} />}
     </AppShell>
   );
 }
@@ -803,6 +812,18 @@ function formatOcrPipelineMessage(result: ScreenOcrResponse): string {
   }
 
   return 'No readable text found';
+}
+
+function formatLocalAssistantContextValue(state: LocalAgentConnectionState): string {
+  if (state === 'ready') {
+    return 'Ready';
+  }
+
+  if (state === 'checking') {
+    return 'Checking';
+  }
+
+  return 'Setup needed';
 }
 
 function formatScreenContextValue(screenContext: ScreenContextSnapshot): string {
