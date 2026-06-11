@@ -34,6 +34,7 @@ export type CommandPipelineStage =
   | 'extracting_ocr'
   | 'analyzing_screen'
   | 'refreshing_manifest'
+  | 'analyzing_project'
   | 'analysis_ready'
   | 'completed'
   | 'failed';
