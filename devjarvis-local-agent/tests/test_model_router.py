@@ -31,7 +31,7 @@ def test_resolve_translation_intent_to_translation_model() -> None:
 
 
 def test_model_routing_snapshot_uses_backward_compatible_ollama_model() -> None:
-    settings = Settings(ollama_model="legacy-model")
+    settings = Settings(_env_file=None, ollama_model="legacy-model")
 
     snapshot = build_model_routing_snapshot(settings)
 
