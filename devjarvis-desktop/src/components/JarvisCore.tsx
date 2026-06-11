@@ -1,15 +1,15 @@
-import type { CommandInput, VoiceState } from '../types/jarvisCommand';
+import type { CommandInput, LocalAgentConnectionState } from '../types/jarvisCommand';
 
 type JarvisCoreProps = {
-  voiceState: VoiceState;
+  assistantState: LocalAgentConnectionState;
   isProcessing: boolean;
   lastCommand: CommandInput | null;
   systemMessage: string | null;
   errorMessage: string | null;
 };
 
-export function JarvisCore({ voiceState, isProcessing, lastCommand, systemMessage, errorMessage }: JarvisCoreProps) {
-  const coreLabel = isProcessing ? 'Processing' : voiceState === 'unavailable' ? 'Mic offline' : 'Listening';
+export function JarvisCore({ assistantState, isProcessing, lastCommand, systemMessage, errorMessage }: JarvisCoreProps) {
+  const coreLabel = resolveCoreLabel(assistantState, isProcessing, Boolean(errorMessage));
 
   return (
     <section className="jarvis-core-panel" aria-label="Jarvis command core">
@@ -27,7 +27,7 @@ export function JarvisCore({ voiceState, isProcessing, lastCommand, systemMessag
         <div className="core-readout">
           <span className="readout-kicker">AI CORE</span>
           <strong>{coreLabel}</strong>
-          <div className="waveform" aria-hidden="true">
+          <div className={`waveform ${isProcessing ? 'waveform-active' : 'waveform-idle'}`} aria-hidden="true">
             {Array.from({ length: 18 }, (_, index) => (
               <span key={index} style={{ animationDelay: `${index * 70}ms` }} />
             ))}
@@ -37,11 +37,35 @@ export function JarvisCore({ voiceState, isProcessing, lastCommand, systemMessag
 
       <div className="command-readout" aria-live="polite">
         <span>Last Command</span>
-        <strong>{lastCommand?.text || 'Waiting for input'}</strong>
+        <strong>{lastCommand?.text || 'Waiting for text command'}</strong>
         {(systemMessage || errorMessage) && (
           <p className={errorMessage ? 'readout-error' : 'readout-message'}>{errorMessage ?? systemMessage}</p>
         )}
       </div>
     </section>
   );
+}
+
+function resolveCoreLabel(
+  assistantState: LocalAgentConnectionState,
+  isProcessing: boolean,
+  hasError: boolean,
+): string {
+  if (isProcessing) {
+    return 'Thinking';
+  }
+
+  if (hasError) {
+    return 'Needs attention';
+  }
+
+  if (assistantState === 'checking') {
+    return 'Checking';
+  }
+
+  if (assistantState === 'ready') {
+    return 'Ready for text';
+  }
+
+  return 'Setup needed';
 }

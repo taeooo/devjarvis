@@ -4,9 +4,10 @@ import type { SystemStatus } from '../types/jarvisCommand';
 type AppShellProps = {
   status: SystemStatus;
   children: ReactNode;
+  onOpenGuide: () => void;
 };
 
-export function AppShell({ status, children }: AppShellProps) {
+export function AppShell({ status, children, onOpenGuide }: AppShellProps) {
   return (
     <main className="app-shell">
       <header className="top-bar">
@@ -25,8 +26,8 @@ export function AppShell({ status, children }: AppShellProps) {
             <span className="system-dot" />
             {status}
           </div>
-          <button className="icon-button" type="button" aria-label="설정">
-            ⚙
+          <button className="icon-button" type="button" aria-label="사용법 열기" title="사용법" onClick={onOpenGuide}>
+            ?
           </button>
         </div>
       </header>
