@@ -40,7 +40,6 @@ struct ScanSummary {
 #[serde(rename_all = "camelCase")]
 struct ProjectScanResult {
     root_name: String,
-    root_path_display: String,
     root_path_alias: String,
     files: Vec<ManifestFile>,
     summary: ScanSummary,
@@ -91,7 +90,6 @@ fn scan_project_manifest(root_path: String) -> Result<ProjectScanResult, String>
 
     Ok(ProjectScanResult {
         root_name: root_name.clone(),
-        root_path_display: root.to_string_lossy().to_string(),
         root_path_alias: format!("LOCAL_PROJECT::{}", sanitize_alias(&root_name)),
         files,
         summary,

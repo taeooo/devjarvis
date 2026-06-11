@@ -20,7 +20,6 @@ export type ScanSummary = {
 
 export type ProjectScanResult = {
   rootName: string;
-  rootPathDisplay: string;
   rootPathAlias: string;
   files: ManifestFile[];
   summary: ScanSummary;

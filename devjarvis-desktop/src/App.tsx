@@ -74,11 +74,9 @@ const initialScreenContext: ScreenContextSnapshot = {
   errorMessage: null,
   lastIntent: null,
   ocrState: 'not_requested',
-  ocrProvider: null,
   ocrTextLength: null,
   ocrErrorMessage: null,
   analysisState: 'not_requested',
-  analysisProvider: null,
   analysisErrorMessage: null,
 };
 
@@ -372,7 +370,6 @@ function App() {
       metadata.analysisTitle = analysisResult.title;
       metadata.analysisPreview = analysisResult.preview;
       metadata.analysisActionItems = analysisResult.actionItems;
-      metadata.analysisSource = 'local_agent';
       stage = 'analysis_ready';
     }
 
@@ -431,11 +428,9 @@ function App() {
         errorMessage: null,
         lastIntent: command.intent,
         ocrState: 'not_requested',
-        ocrProvider: null,
         ocrTextLength: null,
         ocrErrorMessage: null,
         analysisState: 'not_requested',
-        analysisProvider: null,
         analysisErrorMessage: null,
       });
 
@@ -451,11 +446,9 @@ function App() {
         errorMessage: message,
         lastIntent: command.intent,
         ocrState: 'not_requested',
-        ocrProvider: null,
         ocrTextLength: null,
         ocrErrorMessage: null,
         analysisState: 'not_requested',
-        analysisProvider: null,
         analysisErrorMessage: null,
       });
       throw new Error(message);
@@ -466,7 +459,6 @@ function App() {
     setScreenContext((current) => ({
       ...current,
       ocrState: 'extracting',
-      ocrProvider: null,
       ocrTextLength: null,
       ocrErrorMessage: null,
     }));
@@ -493,7 +485,6 @@ function App() {
       setScreenContext((current) => ({
         ...current,
         ocrState: 'completed',
-        ocrProvider: null,
         ocrTextLength: response.textLength,
         ocrErrorMessage: null,
       }));
@@ -504,7 +495,6 @@ function App() {
       setScreenContext((current) => ({
         ...current,
         ocrState: 'failed',
-        ocrProvider: null,
         ocrTextLength: null,
         ocrErrorMessage: message,
       }));
@@ -520,7 +510,6 @@ function App() {
     setScreenContext((current) => ({
       ...current,
       analysisState: 'analyzing',
-      analysisProvider: null,
       analysisErrorMessage: null,
     }));
 
@@ -530,7 +519,6 @@ function App() {
       setScreenContext((current) => ({
         ...current,
         analysisState: 'completed',
-        analysisProvider: response.provider,
         analysisErrorMessage: null,
       }));
 
@@ -540,7 +528,6 @@ function App() {
       setScreenContext((current) => ({
         ...current,
         analysisState: 'failed',
-        analysisProvider: null,
         analysisErrorMessage: message,
       }));
       throw new Error(message);
@@ -555,9 +542,7 @@ function App() {
     if (!ocrResult.textFound || ocrResult.text.trim().length === 0) {
       return {
         requestId: command.id,
-        provider: 'local-agent',
         status: 'no_text',
-        intent: command.intent,
         title: 'No readable text',
         summary: 'No readable text was extracted from the selected screen.',
         detail: '',
@@ -667,7 +652,7 @@ function buildLocalAssistantSetupMessage(appReady: boolean, ocrReady: boolean, l
   }
 
   if (!llmReady) {
-    return 'Local reasoning is not ready. Start Ollama and install the configured local models, then retry.';
+    return 'Local reasoning is not ready. Start the local AI runtime, then retry.';
   }
 
   return getDefaultLocalAssistantSetupMessage();
@@ -679,7 +664,7 @@ function getDefaultLocalAssistantSetupMessage(): string {
 
 function buildFailureNextStep(message: string): string {
   if (message.toLowerCase().includes('local')) {
-    return 'Start Local Agent and Ollama, then retry';
+    return 'Start Local Assistant services, then retry';
   }
 
   return 'Check permission or command context';
@@ -703,9 +688,7 @@ function mapLocalAgentAnalysisResponse(
 
   return {
     requestId: command.id,
-    provider: 'local-agent',
     status: response.status,
-    intent: command.intent,
     title,
     summary,
     detail: response.detail ?? summary,
