@@ -688,10 +688,13 @@ function buildFailureNextStep(message: string): string {
 }
 
 function buildLocalAnalysisContext(command: CommandInput, captured: ScreenCaptureResult, ocrResult: ScreenOcrResponse): string {
+  const userRequest = command.text.length > 240 ? `${command.text.slice(0, 237)}...` : command.text;
+
   return [
     `selectedScreenSize=${captured.width}x${captured.height}`,
     `readableTextLength=${ocrResult.textLength}`,
     `requestType=${formatLocalAgentTitle(command.intent)}`,
+    `userRequest=${userRequest}`,
   ].join('\n');
 }
 

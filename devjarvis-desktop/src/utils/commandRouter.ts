@@ -291,9 +291,17 @@ function hasMathIntent(text: string): boolean {
     'calculate',
     'arithmetic',
     'math',
+    '곱하기',
+    '곱셈',
+    '나누기',
+    '나눗셈',
+    '몫',
+    '나머지',
+    'remainder',
+    'quotient',
   ]);
 }
 
 function hasInlineArithmeticExpression(text: string): boolean {
-  return /\d+\s*[+\-−–]\s*\d+/.test(text);
+  return /\d+\s*[+\-−–*/×÷xX]\s*\d+/.test(text);
 }
