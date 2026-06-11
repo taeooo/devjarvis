@@ -72,6 +72,8 @@ type LocalAssistantReadiness = {
 };
 
 const MAX_RESULT_HISTORY = 8;
+const LOCAL_AGENT_CONTEXT_LIMIT = 3600;
+const PROJECT_ANALYSIS_SAMPLE_LIMIT = 48;
 const PROJECT_CONTEXT_DESCRIPTION = 'Desktop command context source.';
 
 const initialScreenTarget: ScreenTargetSnapshot = {
@@ -900,35 +902,66 @@ function summarizeProjectManifestForLocalAnalysis(scanResult: ProjectScanResult)
   const activeFiles = scanResult.files.filter((file) => !file.excluded);
   const languageCounts = new Map<string, number>();
   const extensionCounts = new Map<string, number>();
-  const sampleFiles = activeFiles.slice(0, 80).map((file) => `${file.relativePath}\t${file.language}\t${file.extension}`);
 
   for (const file of activeFiles) {
     incrementCount(languageCounts, file.language || 'unknown');
     incrementCount(extensionCounts, file.extension || 'none');
   }
 
-  return [
-    `projectRootName=${scanResult.rootName}`,
-    `requestedFileCount=${scanResult.summary.requestedFileCount}`,
-    `targetFileCount=${scanResult.summary.targetFileCount}`,
-    `excludedFileCount=${scanResult.summary.excludedFileCount}`,
-    `sensitiveFileCount=${scanResult.summary.sensitiveFileCount}`,
-    `[languageCounts]\n${formatCountMap(languageCounts)}`,
-    `[extensionCounts]\n${formatCountMap(extensionCounts)}`,
-    `[sampleRelativePaths]\n${sampleFiles.join('\n')}`,
-  ].join('\n');
+  const lines: string[] = [];
+  appendBoundedLine(lines, `projectRootName=${scanResult.rootName}`, LOCAL_AGENT_CONTEXT_LIMIT);
+  appendBoundedLine(lines, `requestedFileCount=${scanResult.summary.requestedFileCount}`, LOCAL_AGENT_CONTEXT_LIMIT);
+  appendBoundedLine(lines, `targetFileCount=${scanResult.summary.targetFileCount}`, LOCAL_AGENT_CONTEXT_LIMIT);
+  appendBoundedLine(lines, `excludedFileCount=${scanResult.summary.excludedFileCount}`, LOCAL_AGENT_CONTEXT_LIMIT);
+  appendBoundedLine(lines, `sensitiveFileCount=${scanResult.summary.sensitiveFileCount}`, LOCAL_AGENT_CONTEXT_LIMIT);
+  appendBoundedLine(lines, '[languageCounts]', LOCAL_AGENT_CONTEXT_LIMIT);
+  for (const line of formatCountMapLines(languageCounts)) {
+    appendBoundedLine(lines, line, LOCAL_AGENT_CONTEXT_LIMIT);
+  }
+  appendBoundedLine(lines, '[extensionCounts]', LOCAL_AGENT_CONTEXT_LIMIT);
+  for (const line of formatCountMapLines(extensionCounts)) {
+    appendBoundedLine(lines, line, LOCAL_AGENT_CONTEXT_LIMIT);
+  }
+  appendBoundedLine(lines, '[sampleRelativePaths]', LOCAL_AGENT_CONTEXT_LIMIT);
+
+  let sampled = 0;
+  for (const file of activeFiles) {
+    if (sampled >= PROJECT_ANALYSIS_SAMPLE_LIMIT) break;
+    const line = `${file.relativePath}	${file.language}	${file.extension}`;
+    if (!appendBoundedLine(lines, line, LOCAL_AGENT_CONTEXT_LIMIT)) break;
+    sampled += 1;
+  }
+
+  if (sampled < activeFiles.length) {
+    appendBoundedLine(lines, `sampleTruncated=true`, LOCAL_AGENT_CONTEXT_LIMIT);
+    appendBoundedLine(lines, `sampleIncluded=${sampled}`, LOCAL_AGENT_CONTEXT_LIMIT);
+  }
+
+  return lines.join('\n');
+}
+
+function appendBoundedLine(lines: string[], line: string, limit: number): boolean {
+  const normalized = line.trimEnd();
+  const currentLength = lines.join('\n').length;
+  const nextLength = currentLength + (lines.length > 0 ? 1 : 0) + normalized.length;
+
+  if (nextLength <= limit) {
+    lines.push(normalized);
+    return true;
+  }
+
+  return false;
 }
 
 function incrementCount(counts: Map<string, number>, key: string) {
   counts.set(key, (counts.get(key) ?? 0) + 1);
 }
 
-function formatCountMap(counts: Map<string, number>): string {
+function formatCountMapLines(counts: Map<string, number>): string[] {
   return Array.from(counts.entries())
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
     .slice(0, 20)
-    .map(([key, count]) => `${key}=${count}`)
-    .join('\n');
+    .map(([key, count]) => `${key}=${count}`);
 }
 
 function buildLocalAnalysisContext(
