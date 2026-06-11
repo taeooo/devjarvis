@@ -13,7 +13,7 @@ class LocalLlmService:
 
     async def analyze(self, request: LocalLlmAnalyzeRequest) -> LocalLlmAnalyzeResponse:
         if request.intent == "screen_math_solver":
-            deterministic_response = solve_arithmetic_text(request.text)
+            deterministic_response = solve_arithmetic_text(request.text, context=request.context)
             if deterministic_response is not None:
                 return deterministic_response
 
