@@ -9,8 +9,8 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -19,41 +19,37 @@ import static org.mockito.Mockito.when;
 
 class ProjectServiceTest {
 
+    private final ProjectRepository projectRepository = mock(ProjectRepository.class);
+    private final ProjectService projectService = new ProjectService(projectRepository);
+
     @Test
-    void createReturnsExistingProjectWhenRootPathAliasAlreadyRegistered() {
-        ProjectRepository repository = mock(ProjectRepository.class);
-        Project existing = Project.create("devjarvis", "alias-001", "existing");
-        when(repository.findFirstByRootPathAliasAndStatus("alias-001", ProjectStatus.ACTIVE))
+    void createReturnsExistingProjectWhenRootPathAliasAlreadyExists() {
+        Project existing = Project.create("devjarvis", "LOCAL_PROJECT::devjarvis", null);
+        when(projectRepository.findFirstByRootPathAliasAndStatus("LOCAL_PROJECT::devjarvis", ProjectStatus.ACTIVE))
                 .thenReturn(Optional.of(existing));
 
-        ProjectService service = new ProjectService(repository);
-        ProjectResponse response = service.create(new ProjectCreateRequest(
+        ProjectResponse response = projectService.create(new ProjectCreateRequest(
                 "devjarvis",
-                "alias-001",
-                "new request"
+                "LOCAL_PROJECT::devjarvis",
+                null
         ));
 
-        assertEquals("devjarvis", response.name());
-        assertEquals("alias-001", response.rootPathAlias());
-        verify(repository, never()).save(any(Project.class));
+        assertThat(response.name()).isEqualTo("devjarvis");
+        assertThat(response.rootPathAlias()).isEqualTo("LOCAL_PROJECT::devjarvis");
+        verify(projectRepository, never()).save(any(Project.class));
     }
 
     @Test
-    void createRejectsSameNameWithDifferentRootPathAlias() {
-        ProjectRepository repository = mock(ProjectRepository.class);
-        Project existing = Project.create("devjarvis", "alias-001", "existing");
-        when(repository.findFirstByRootPathAliasAndStatus("alias-002", ProjectStatus.ACTIVE))
+    void createRejectsNameConflictForDifferentRootPathAlias() {
+        when(projectRepository.findFirstByRootPathAliasAndStatus("LOCAL_PROJECT::other", ProjectStatus.ACTIVE))
                 .thenReturn(Optional.empty());
-        when(repository.findByNameIgnoreCase("devjarvis"))
-                .thenReturn(Optional.of(existing));
+        when(projectRepository.existsByNameIgnoreCase("devjarvis")).thenReturn(true);
 
-        ProjectService service = new ProjectService(repository);
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> service.create(new ProjectCreateRequest("devjarvis", "alias-002", null))
-        );
-
-        assertEquals("PROJECT_NAME_CONFLICT", exception.getMessage());
-        verify(repository, never()).save(any(Project.class));
+        assertThatThrownBy(() -> projectService.create(new ProjectCreateRequest(
+                "devjarvis",
+                "LOCAL_PROJECT::other",
+                null
+        ))).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("PROJECT_NAME_CONFLICT");
     }
 }

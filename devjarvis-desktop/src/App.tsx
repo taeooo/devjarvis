@@ -55,13 +55,6 @@ type PipelineExecutionSummary = {
   stage: CommandPipelineStage;
 };
 
-type ProjectManifestRefreshResult = {
-  scan: ProjectScanResult;
-  registration: ManifestRegisterResponse | null;
-  syncStatus: 'synced' | 'failed';
-  syncWarning: string | null;
-};
-
 type LocalAssistantReadiness = {
   ready: boolean;
   appReady: boolean;
@@ -72,9 +65,8 @@ type LocalAssistantReadiness = {
 };
 
 const MAX_RESULT_HISTORY = 8;
-const LOCAL_AGENT_CONTEXT_LIMIT = 3600;
+const PROJECT_ANALYSIS_CONTEXT_MAX_CHARS = 3600;
 const PROJECT_ANALYSIS_SAMPLE_LIMIT = 48;
-const PROJECT_CONTEXT_DESCRIPTION = 'Desktop command context source.';
 
 const initialScreenTarget: ScreenTargetSnapshot = {
   kind: 'not_selected',
@@ -350,9 +342,7 @@ function App() {
   }
 
   async function handleTextCommandSubmit(text: string) {
-    const command = createCommandInput(text, 'text', {
-      projectSelected: selectedProject !== null,
-    });
+    const command = createCommandInput(text, 'text', { projectSelected: selectedProject !== null });
     const plan = createCommandPlan(command);
     const startedResult: CommandResult = {
       id: createClientId(),
@@ -452,25 +442,16 @@ function App() {
     }
 
     if (plan.needsProjectManifest || shouldUseProjectForScreenDiagnosis) {
-      updateProcessingStage(
-        plan.command.id,
-        'refreshing_manifest',
-        shouldUseProjectForScreenDiagnosis ? 'Preparing project context' : 'Reading project manifest',
-      );
+      updateProcessingStage(plan.command.id, 'refreshing_manifest', shouldUseProjectForScreenDiagnosis ? 'Preparing project context' : 'Refreshing project manifest');
       if (selectedProject) {
-        const refreshResult = await refreshProjectManifest(selectedProject);
-        projectScan = refreshResult.scan;
-        messages.push(`Project scanned · ${refreshResult.scan.summary.targetFileCount.toLocaleString()} files`);
-        if (refreshResult.syncStatus === 'failed') {
-          messages.push('Backend manifest sync skipped');
-        }
-        metadata.manifestTargetFileCount = refreshResult.scan.summary.targetFileCount;
-        metadata.manifestExcludedFileCount = refreshResult.scan.summary.excludedFileCount;
+        const summary = await refreshProjectManifest(selectedProject);
+        projectScan = summary.scan;
+        const targetFileCount = summary.registration?.targetFileCount ?? summary.scan.summary.targetFileCount;
+        const excludedFileCount = summary.registration?.excludedFileCount ?? summary.scan.summary.excludedFileCount;
+        messages.push(`Project manifest ready · ${targetFileCount.toLocaleString()} files`);
+        metadata.manifestTargetFileCount = targetFileCount;
+        metadata.manifestExcludedFileCount = excludedFileCount;
         metadata.projectContext = 'selected';
-        metadata.projectManifestSyncStatus = refreshResult.syncStatus;
-        if (refreshResult.syncWarning) {
-          metadata.projectManifestSyncWarning = refreshResult.syncWarning;
-        }
       } else {
         messages.push('Project context not selected');
         metadata.projectContext = 'not_selected';
@@ -714,42 +695,28 @@ function App() {
     return mapLocalAgentAnalysisResponse(command, ocrResult, localResponse);
   }
 
-  async function refreshProjectManifest(projectContext: SelectedProject): Promise<ProjectManifestRefreshResult> {
+  async function refreshProjectManifest(
+    projectContext: SelectedProject,
+  ): Promise<{ registration: ManifestRegisterResponse | null; scan: ProjectScanResult }> {
     const scanResult = await invoke<ProjectScanResult>('scan_project_manifest', { rootPath: projectContext.rootPath });
     setLatestProjectScan(scanResult);
 
-    const syncResult = await syncProjectManifestToBackend(projectContext, scanResult);
-    if (syncResult.registration) {
-      setLatestSummary(syncResult.registration);
-    }
-
-    return {
-      scan: scanResult,
-      registration: syncResult.registration,
-      syncStatus: syncResult.syncStatus,
-      syncWarning: syncResult.syncWarning,
-    };
-  }
-
-  async function syncProjectManifestToBackend(
-    projectContext: SelectedProject,
-    scanResult: ProjectScanResult,
-  ): Promise<{ registration: ManifestRegisterResponse | null; syncStatus: 'synced' | 'failed'; syncWarning: string | null }> {
     try {
-      const project = registeredProject ?? await createProject({
-        name: scanResult.rootName || projectContext.name,
-        rootPathAlias: scanResult.rootPathAlias,
-        description: PROJECT_CONTEXT_DESCRIPTION,
-      });
+      const project = registeredProject?.rootPathAlias === scanResult.rootPathAlias
+        ? registeredProject
+        : await createProject({
+          name: scanResult.rootName || projectContext.name,
+          rootPathAlias: scanResult.rootPathAlias,
+          description: 'Desktop command context source.',
+        });
+
       const summary = await registerProjectManifest(project.id, scanResult.files);
       setRegisteredProject(project);
-      return { registration: summary, syncStatus: 'synced', syncWarning: null };
-    } catch (caught) {
-      return {
-        registration: null,
-        syncStatus: 'failed',
-        syncWarning: normalizeBackendSyncWarning(caught),
-      };
+      setLatestSummary(summary);
+      return { registration: summary, scan: scanResult };
+    } catch {
+      setLatestSummary(null);
+      return { registration: null, scan: scanResult };
     }
   }
 
@@ -885,19 +852,6 @@ function buildFailureNextStep(message: string): string {
   return 'Check permission or command context';
 }
 
-function normalizeBackendSyncWarning(caught: unknown): string {
-  const message = toErrorMessage(caught).trim();
-  if (!message) {
-    return 'BACKEND_MANIFEST_SYNC_FAILED';
-  }
-
-  if (message.length > 160) {
-    return `${message.slice(0, 157)}...`;
-  }
-
-  return message;
-}
-
 function summarizeProjectManifestForLocalAnalysis(scanResult: ProjectScanResult): string {
   const activeFiles = scanResult.files.filter((file) => !file.excluded);
   const languageCounts = new Map<string, number>();
@@ -908,49 +862,24 @@ function summarizeProjectManifestForLocalAnalysis(scanResult: ProjectScanResult)
     incrementCount(extensionCounts, file.extension || 'none');
   }
 
-  const lines: string[] = [];
-  appendBoundedLine(lines, `projectRootName=${scanResult.rootName}`, LOCAL_AGENT_CONTEXT_LIMIT);
-  appendBoundedLine(lines, `requestedFileCount=${scanResult.summary.requestedFileCount}`, LOCAL_AGENT_CONTEXT_LIMIT);
-  appendBoundedLine(lines, `targetFileCount=${scanResult.summary.targetFileCount}`, LOCAL_AGENT_CONTEXT_LIMIT);
-  appendBoundedLine(lines, `excludedFileCount=${scanResult.summary.excludedFileCount}`, LOCAL_AGENT_CONTEXT_LIMIT);
-  appendBoundedLine(lines, `sensitiveFileCount=${scanResult.summary.sensitiveFileCount}`, LOCAL_AGENT_CONTEXT_LIMIT);
-  appendBoundedLine(lines, '[languageCounts]', LOCAL_AGENT_CONTEXT_LIMIT);
-  for (const line of formatCountMapLines(languageCounts)) {
-    appendBoundedLine(lines, line, LOCAL_AGENT_CONTEXT_LIMIT);
-  }
-  appendBoundedLine(lines, '[extensionCounts]', LOCAL_AGENT_CONTEXT_LIMIT);
-  for (const line of formatCountMapLines(extensionCounts)) {
-    appendBoundedLine(lines, line, LOCAL_AGENT_CONTEXT_LIMIT);
-  }
-  appendBoundedLine(lines, '[sampleRelativePaths]', LOCAL_AGENT_CONTEXT_LIMIT);
+  const baseLines = [
+    `projectRootName=${scanResult.rootName}`,
+    `requestedFileCount=${scanResult.summary.requestedFileCount}`,
+    `targetFileCount=${scanResult.summary.targetFileCount}`,
+    `excludedFileCount=${scanResult.summary.excludedFileCount}`,
+    `sensitiveFileCount=${scanResult.summary.sensitiveFileCount}`,
+    '[languageCounts]',
+    ...formatCountMapLines(languageCounts),
+    '[extensionCounts]',
+    ...formatCountMapLines(extensionCounts),
+    '[sampleRelativePaths]',
+  ];
 
-  let sampled = 0;
-  for (const file of activeFiles) {
-    if (sampled >= PROJECT_ANALYSIS_SAMPLE_LIMIT) break;
-    const line = `${file.relativePath}	${file.language}	${file.extension}`;
-    if (!appendBoundedLine(lines, line, LOCAL_AGENT_CONTEXT_LIMIT)) break;
-    sampled += 1;
-  }
+  const sampleLines = activeFiles
+    .slice(0, PROJECT_ANALYSIS_SAMPLE_LIMIT)
+    .map((file) => `${file.relativePath}	${file.language}	${file.extension}`);
 
-  if (sampled < activeFiles.length) {
-    appendBoundedLine(lines, `sampleTruncated=true`, LOCAL_AGENT_CONTEXT_LIMIT);
-    appendBoundedLine(lines, `sampleIncluded=${sampled}`, LOCAL_AGENT_CONTEXT_LIMIT);
-  }
-
-  return lines.join('\n');
-}
-
-function appendBoundedLine(lines: string[], line: string, limit: number): boolean {
-  const normalized = line.trimEnd();
-  const currentLength = lines.join('\n').length;
-  const nextLength = currentLength + (lines.length > 0 ? 1 : 0) + normalized.length;
-
-  if (nextLength <= limit) {
-    lines.push(normalized);
-    return true;
-  }
-
-  return false;
+  return clampLinesToBudget([...baseLines, ...sampleLines], PROJECT_ANALYSIS_CONTEXT_MAX_CHARS);
 }
 
 function incrementCount(counts: Map<string, number>, key: string) {
@@ -962,6 +891,23 @@ function formatCountMapLines(counts: Map<string, number>): string[] {
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
     .slice(0, 20)
     .map(([key, count]) => `${key}=${count}`);
+}
+
+function clampLinesToBudget(lines: string[], maxChars: number): string {
+  const accepted: string[] = [];
+  let used = 0;
+
+  for (const line of lines) {
+    const nextLength = used + line.length + (accepted.length > 0 ? 1 : 0);
+    if (nextLength > maxChars) {
+      break;
+    }
+
+    accepted.push(line);
+    used = nextLength;
+  }
+
+  return accepted.join('\n');
 }
 
 function buildLocalAnalysisContext(
