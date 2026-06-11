@@ -34,8 +34,6 @@ export type CommandPipelineStage =
   | 'extracting_ocr'
   | 'analyzing_screen'
   | 'refreshing_manifest'
-  | 'analyzing_project'
-  | 'analyzing_text'
   | 'analysis_ready'
   | 'completed'
   | 'failed';
@@ -58,14 +56,25 @@ export type OcrExtractionState = 'not_requested' | 'uploading' | 'extracting' | 
 export type ScreenAnalysisState = 'not_requested' | 'analyzing' | 'completed' | 'failed';
 
 export type CommandResultMetadata = {
+  analysisSource?: 'local_agent' | 'remote_backend';
   localAgentState?: LocalAgentConnectionState;
+  localAgentProvider?: string | null;
+  localAgentModel?: string | null;
+  localAgentModelRole?: string | null;
   screenSize?: string;
   manifestTargetFileCount?: number;
   manifestExcludedFileCount?: number;
   projectContext?: 'selected' | 'not_selected';
+  ocrProvider?: string;
+  ocrStatus?: string;
   ocrTextLength?: number;
   ocrTextFound?: boolean;
+  ocrPreview?: string;
+  analysisProvider?: string;
+  analysisStatus?: string;
   analysisTitle?: string;
+  analysisSummary?: string;
+  analysisDetail?: string;
   analysisPreview?: string;
   analysisActionItems?: string[];
   screenTarget?: string;
@@ -127,9 +136,11 @@ export type ScreenContextSnapshot = {
   errorMessage: string | null;
   lastIntent: CommandIntent | null;
   ocrState: OcrExtractionState;
+  ocrProvider: string | null;
   ocrTextLength: number | null;
   ocrErrorMessage: string | null;
   analysisState: ScreenAnalysisState;
+  analysisProvider: string | null;
   analysisErrorMessage: string | null;
 };
 
@@ -222,9 +233,23 @@ export type LocalOcrExtractResponse = ScreenOcrResponse & {
   blocks?: LocalOcrTextBlock[];
 };
 
+export type ScreenAnalysisRequest = {
+  commandId: string;
+  intent: CommandIntent;
+  contextMode: ContextMode;
+  ocrProvider: string;
+  ocrText: string;
+  ocrTextFound: boolean;
+  width: number;
+  height: number;
+  capturedAt: string;
+};
+
 export type ScreenAnalysisResponse = {
   requestId: string;
+  provider: string;
   status: string;
+  intent: CommandIntent;
   title: string;
   summary: string;
   detail: string;
