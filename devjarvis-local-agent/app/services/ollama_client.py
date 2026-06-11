@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
@@ -81,10 +82,12 @@ class OllamaClient:
                 raw = response.json()
             content = self._extract_content(raw)
             parsed = self._parse_model_json(content)
+            summary = self._as_optional_string(parsed.get("summary")) or self._fallback_summary(content)
+            detail = self._as_optional_string(parsed.get("detail"))
             return LocalLlmAnalyzeResponse(
                 status="completed",
-                summary=parsed.get("summary") or content[:500] or "Analysis completed.",
-                detail=parsed.get("detail"),
+                summary=summary,
+                detail=detail,
                 actionItems=self._as_string_list(parsed.get("actionItems")),
                 warnings=warnings,
             )
@@ -105,20 +108,83 @@ class OllamaClient:
             return payload["response"].strip()
         return ""
 
-    @staticmethod
-    def _parse_model_json(content: str) -> dict[str, Any]:
+    @classmethod
+    def _parse_model_json(cls, content: str) -> dict[str, Any]:
         if not content:
             return {}
-        stripped = content.strip()
+
+        candidate = cls._normalize_model_json_candidate(content)
+        if not candidate:
+            return {}
+
+        try:
+            parsed = json.loads(candidate)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+
+    @classmethod
+    def _normalize_model_json_candidate(cls, content: str) -> str:
+        stripped = cls._strip_thinking_blocks(content).strip()
         if stripped.startswith("```"):
             stripped = stripped.strip("`")
             if stripped.lower().startswith("json"):
                 stripped = stripped[4:].strip()
-        try:
-            parsed = json.loads(stripped)
-            return parsed if isinstance(parsed, dict) else {}
-        except json.JSONDecodeError:
-            return {"summary": content[:1000]}
+
+        direct = stripped.strip()
+        if direct.startswith("{") and direct.endswith("}"):
+            return direct
+
+        extracted = cls._extract_first_json_object(direct)
+        return extracted or direct
+
+    @staticmethod
+    def _strip_thinking_blocks(content: str) -> str:
+        return re.sub(r"<think>.*?</think>", "", content, flags=re.IGNORECASE | re.DOTALL)
+
+    @staticmethod
+    def _extract_first_json_object(content: str) -> str | None:
+        start = content.find("{")
+        if start < 0:
+            return None
+
+        depth = 0
+        in_string = False
+        escaped = False
+        for index, char in enumerate(content[start:], start=start):
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return content[start:index + 1]
+
+        return None
+
+    @staticmethod
+    def _as_optional_string(value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        return json.dumps(value, ensure_ascii=False)
+
+    @staticmethod
+    def _fallback_summary(content: str) -> str:
+        normalized = OllamaClient._strip_thinking_blocks(content).strip()
+        return normalized[:500] or "Analysis completed."
 
     @staticmethod
     def _as_string_list(value: Any) -> list[str]:

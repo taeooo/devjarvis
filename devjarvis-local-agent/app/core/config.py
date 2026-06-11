@@ -41,6 +41,12 @@ class Settings(BaseSettings):
 
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: [
+            # Tauri production/custom-protocol origins. Keep exact origins only; do not
+            # use wildcard CORS for the local-only agent.
+            "http://tauri.localhost",
+            "https://tauri.localhost",
+            "tauri://localhost",
+            # Vite/Tauri dev server origins.
             "http://localhost:1420",
             "http://127.0.0.1:1420",
             "http://localhost:5173",

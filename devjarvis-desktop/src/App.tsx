@@ -33,7 +33,7 @@ import type {
   SystemStatus,
   VoiceState,
 } from './types/jarvisCommand';
-import type { ManifestFile, ManifestRegisterResponse, ProjectResponse, ProjectScanResult } from './types/projectScanner';
+import type { ManifestRegisterResponse, ProjectResponse, ProjectScanResult } from './types/projectScanner';
 
 type SelectedProject = {
   rootPath: string;
@@ -44,11 +44,6 @@ type PipelineExecutionSummary = {
   messages: string[];
   metadata: NonNullable<CommandResult['metadata']>;
   stage: CommandPipelineStage;
-};
-
-type ProjectManifestContext = {
-  scanResult: ProjectScanResult;
-  summary: ManifestRegisterResponse;
 };
 
 type LocalAssistantReadiness = {
@@ -79,9 +74,11 @@ const initialScreenContext: ScreenContextSnapshot = {
   errorMessage: null,
   lastIntent: null,
   ocrState: 'not_requested',
+  ocrProvider: null,
   ocrTextLength: null,
   ocrErrorMessage: null,
   analysisState: 'not_requested',
+  analysisProvider: null,
   analysisErrorMessage: null,
 };
 
@@ -247,20 +244,6 @@ function App() {
     }
   }
 
-  async function ensureLocalReasoningReady(): Promise<void> {
-    const readiness = await checkLocalReasoningReadiness();
-    if (!readiness.ready) {
-      throw new Error(readiness.message ?? 'Local reasoning is not ready. Start the local AI runtime, then retry.');
-    }
-
-    setLocalAgentHealth({
-      state: 'ready',
-      warning: null,
-      checkedAt: readiness.checkedAt,
-      errorMessage: null,
-    });
-  }
-
   async function handleSelectProjectFolder() {
     setSystemMessage(null);
     setErrorMessage(null);
@@ -363,7 +346,6 @@ function App() {
     const messages: string[] = [];
     const metadata: NonNullable<CommandResult['metadata']> = {};
     let stage: CommandPipelineStage = 'completed';
-    let screenAnalysisResult: ScreenAnalysisResponse | null = null;
 
     if (plan.needsScreenCapture) {
       updateProcessingStage(plan.command.id, 'received', 'Checking local assistant');
@@ -386,30 +368,24 @@ function App() {
 
       updateProcessingStage(plan.command.id, 'analyzing_screen', 'Analyzing screen text');
       const analysisResult = await requestScreenAnalysis(plan.command, captured, ocrResult);
-      screenAnalysisResult = analysisResult;
       messages.push(formatAnalysisPipelineMessage(analysisResult));
       metadata.analysisTitle = analysisResult.title;
+      metadata.analysisSummary = analysisResult.summary;
+      metadata.analysisDetail = analysisResult.detail;
       metadata.analysisPreview = analysisResult.preview;
       metadata.analysisActionItems = analysisResult.actionItems;
+      metadata.analysisSource = 'local_agent';
       stage = 'analysis_ready';
     }
 
     if (plan.needsProjectManifest) {
       updateProcessingStage(plan.command.id, 'refreshing_manifest', 'Refreshing project manifest');
       if (selectedProject) {
-        const projectContext = await refreshProjectManifest(selectedProject);
-        const summary = projectContext.summary;
+        const summary = await refreshProjectManifest(selectedProject);
         messages.push(`Project refreshed · ${summary.targetFileCount.toLocaleString()} files`);
         metadata.manifestTargetFileCount = summary.targetFileCount;
         metadata.manifestExcludedFileCount = summary.excludedFileCount;
         metadata.projectContext = 'selected';
-
-        updateProcessingStage(plan.command.id, 'analyzing_project', 'Analyzing project context');
-        const projectAnalysisResult = await requestProjectAnalysis(plan.command, projectContext, screenAnalysisResult);
-        messages.push(formatAnalysisPipelineMessage(projectAnalysisResult));
-        metadata.analysisTitle = projectAnalysisResult.title;
-        metadata.analysisPreview = projectAnalysisResult.preview;
-        metadata.analysisActionItems = projectAnalysisResult.actionItems;
       } else {
         messages.push('Project context not selected');
         metadata.projectContext = 'not_selected';
@@ -457,9 +433,11 @@ function App() {
         errorMessage: null,
         lastIntent: command.intent,
         ocrState: 'not_requested',
+        ocrProvider: null,
         ocrTextLength: null,
         ocrErrorMessage: null,
         analysisState: 'not_requested',
+        analysisProvider: null,
         analysisErrorMessage: null,
       });
 
@@ -475,9 +453,11 @@ function App() {
         errorMessage: message,
         lastIntent: command.intent,
         ocrState: 'not_requested',
+        ocrProvider: null,
         ocrTextLength: null,
         ocrErrorMessage: null,
         analysisState: 'not_requested',
+        analysisProvider: null,
         analysisErrorMessage: null,
       });
       throw new Error(message);
@@ -488,6 +468,7 @@ function App() {
     setScreenContext((current) => ({
       ...current,
       ocrState: 'extracting',
+      ocrProvider: null,
       ocrTextLength: null,
       ocrErrorMessage: null,
     }));
@@ -514,6 +495,7 @@ function App() {
       setScreenContext((current) => ({
         ...current,
         ocrState: 'completed',
+        ocrProvider: null,
         ocrTextLength: response.textLength,
         ocrErrorMessage: null,
       }));
@@ -524,6 +506,7 @@ function App() {
       setScreenContext((current) => ({
         ...current,
         ocrState: 'failed',
+        ocrProvider: null,
         ocrTextLength: null,
         ocrErrorMessage: message,
       }));
@@ -539,6 +522,7 @@ function App() {
     setScreenContext((current) => ({
       ...current,
       analysisState: 'analyzing',
+      analysisProvider: null,
       analysisErrorMessage: null,
     }));
 
@@ -548,6 +532,7 @@ function App() {
       setScreenContext((current) => ({
         ...current,
         analysisState: 'completed',
+        analysisProvider: response.provider,
         analysisErrorMessage: null,
       }));
 
@@ -557,6 +542,7 @@ function App() {
       setScreenContext((current) => ({
         ...current,
         analysisState: 'failed',
+        analysisProvider: null,
         analysisErrorMessage: message,
       }));
       throw new Error(message);
@@ -571,7 +557,9 @@ function App() {
     if (!ocrResult.textFound || ocrResult.text.trim().length === 0) {
       return {
         requestId: command.id,
+        provider: 'local-agent',
         status: 'no_text',
+        intent: command.intent,
         title: 'No readable text',
         summary: 'No readable text was extracted from the selected screen.',
         detail: '',
@@ -593,7 +581,7 @@ function App() {
     return mapLocalAgentAnalysisResponse(command, ocrResult, localResponse);
   }
 
-  async function refreshProjectManifest(projectContext: SelectedProject): Promise<ProjectManifestContext> {
+  async function refreshProjectManifest(projectContext: SelectedProject): Promise<ManifestRegisterResponse> {
     const scanResult = await invoke<ProjectScanResult>('scan_project_manifest', { rootPath: projectContext.rootPath });
     const project = registeredProject ?? await createProject({
       name: scanResult.rootName || projectContext.name,
@@ -604,24 +592,7 @@ function App() {
     const summary = await registerProjectManifest(project.id, scanResult.files);
     setRegisteredProject(project);
     setLatestSummary(summary);
-    return { scanResult, summary };
-  }
-
-  async function requestProjectAnalysis(
-    command: CommandInput,
-    projectContext: ProjectManifestContext,
-    screenAnalysisResult: ScreenAnalysisResponse | null,
-  ): Promise<ScreenAnalysisResponse> {
-    await ensureLocalReasoningReady();
-
-    const localResponse = await analyzeWithLocalAgent({
-      commandId: command.id,
-      intent: command.intent,
-      text: command.text,
-      context: buildProjectAnalysisContext(projectContext, screenAnalysisResult),
-    });
-
-    return mapLocalAgentProjectAnalysisResponse(command, projectContext, localResponse);
+    return summary;
   }
 
   function upsertCommandResult(result: CommandResult) {
@@ -688,28 +659,6 @@ async function checkLocalAssistantReadiness(): Promise<LocalAssistantReadiness> 
   };
 }
 
-async function checkLocalReasoningReadiness(): Promise<Pick<LocalAssistantReadiness, 'ready' | 'appReady' | 'llmReady' | 'message' | 'checkedAt'>> {
-  const checkedAt = new Date().toISOString();
-  const [appResult, llmResult] = await Promise.allSettled([
-    getLocalAgentAppHealth(),
-    getLocalAgentHealth(),
-  ]);
-
-  const appReady = appResult.status === 'fulfilled'
-    && appResult.value.status === 'UP'
-    && appResult.value.loopbackOnly === true;
-  const llmReady = llmResult.status === 'fulfilled' && llmResult.value.available === true;
-  const ready = appReady && llmReady;
-
-  return {
-    ready,
-    appReady,
-    llmReady,
-    message: ready ? null : buildLocalReasoningSetupMessage(appReady, llmReady),
-    checkedAt,
-  };
-}
-
 function buildLocalAssistantSetupMessage(appReady: boolean, ocrReady: boolean, llmReady: boolean): string {
   if (!appReady) {
     return 'Local Assistant is not running. Start DevJarvis Local Agent, then retry.';
@@ -720,19 +669,7 @@ function buildLocalAssistantSetupMessage(appReady: boolean, ocrReady: boolean, l
   }
 
   if (!llmReady) {
-    return 'Local reasoning is not ready. Start the local AI runtime, then retry.';
-  }
-
-  return getDefaultLocalAssistantSetupMessage();
-}
-
-function buildLocalReasoningSetupMessage(appReady: boolean, llmReady: boolean): string {
-  if (!appReady) {
-    return 'Local Assistant is not running. Start DevJarvis Local Agent, then retry.';
-  }
-
-  if (!llmReady) {
-    return 'Local reasoning is not ready. Start the local AI runtime, then retry.';
+    return 'Local reasoning is not ready. Start Ollama and install the configured local models, then retry.';
   }
 
   return getDefaultLocalAssistantSetupMessage();
@@ -744,7 +681,7 @@ function getDefaultLocalAssistantSetupMessage(): string {
 
 function buildFailureNextStep(message: string): string {
   if (message.toLowerCase().includes('local')) {
-    return 'Start Local Assistant services, then retry';
+    return 'Start Local Agent and Ollama, then retry';
   }
 
   return 'Check permission or command context';
@@ -758,111 +695,6 @@ function buildLocalAnalysisContext(command: CommandInput, captured: ScreenCaptur
   ].join('\n');
 }
 
-function buildProjectAnalysisContext(
-  projectContext: ProjectManifestContext,
-  screenAnalysisResult: ScreenAnalysisResponse | null,
-): string {
-  const { scanResult, summary } = projectContext;
-  const indexableFiles = scanResult.files.filter((file) => !file.excluded);
-  const excludedFiles = scanResult.files.filter((file) => file.excluded);
-  const languageSummary = summarizeProjectFilesBy(indexableFiles, (file) => file.language || 'unknown', 12);
-  const directorySummary = summarizeProjectFilesBy(indexableFiles, (file) => firstPathSegment(file.relativePath), 12);
-  const excludedSummary = summarizeProjectFilesBy(excludedFiles, (file) => file.excludedReason ?? 'UNKNOWN', 8);
-  const fileHints = buildProjectFileHints(indexableFiles, 32);
-  const screenSummary = screenAnalysisResult
-    ? compactLine(screenAnalysisResult.summary || screenAnalysisResult.title, 500)
-    : 'none';
-
-  return clampText([
-    'Project context policy:',
-    '- Manifest metadata only. No source file contents are included.',
-    '- Paths are relative project paths. No absolute OS paths are included.',
-    '- Sensitive, generated, binary, large, and tooling files are excluded from file hints.',
-    '',
-    `projectName=${compactLine(scanResult.rootName || 'selected project', 120)}`,
-    `requestedFileCount=${summary.requestedFileCount}`,
-    `targetFileCount=${summary.targetFileCount}`,
-    `excludedFileCount=${summary.excludedFileCount}`,
-    `sensitiveFileCount=${scanResult.summary.sensitiveFileCount}`,
-    `largeFileCount=${scanResult.summary.largeFileCount}`,
-    `generatedOrToolingFileCount=${scanResult.summary.generatedOrToolingFileCount}`,
-    `languageSummary=${languageSummary || 'none'}`,
-    `directorySummary=${directorySummary || 'none'}`,
-    `excludedReasonSummary=${excludedSummary || 'none'}`,
-    `relatedScreenSummary=${screenSummary}`,
-    '',
-    '[Representative relative files]',
-    fileHints || 'none',
-  ].join('\n'), 3800);
-}
-
-function mapLocalAgentProjectAnalysisResponse(
-  command: CommandInput,
-  projectContext: ProjectManifestContext,
-  response: LocalLlmAnalyzeResponse,
-): ScreenAnalysisResponse {
-  const title = response.status === 'completed' ? formatLocalAgentTitle(command.intent) : 'Project analysis failed';
-  const summary = response.summary || 'Local Agent returned an empty project summary.';
-
-  return {
-    requestId: command.id,
-    status: response.status,
-    title,
-    summary,
-    detail: response.detail ?? summary,
-    preview: summarizePreview(summary, response.detail),
-    actionItems: response.actionItems ?? [],
-    textUsedLength: projectContext.summary.targetFileCount,
-    warnings: response.warnings ?? [],
-    analyzedAt: new Date().toISOString(),
-  };
-}
-
-function summarizeProjectFilesBy(
-  files: ManifestFile[],
-  selector: (file: ManifestFile) => string,
-  limit: number,
-): string {
-  const counts = new Map<string, number>();
-  files.forEach((file) => {
-    const key = compactLine(selector(file) || 'unknown', 80);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  });
-
-  return [...counts.entries()]
-    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-    .slice(0, limit)
-    .map(([key, count]) => `${key}:${count}`)
-    .join(', ');
-}
-
-function buildProjectFileHints(files: ManifestFile[], limit: number): string {
-  return files
-    .filter((file) => file.language !== 'unknown')
-    .slice(0, limit)
-    .map((file) => `- ${compactRelativePath(file.relativePath)}`)
-    .join('\n');
-}
-
-function compactRelativePath(value: string): string {
-  return compactLine(value.replaceAll('\\', '/').replace(/^\/+/, ''), 160);
-}
-
-function firstPathSegment(relativePath: string): string {
-  const normalized = compactRelativePath(relativePath);
-  const [segment] = normalized.split('/');
-  return segment || '(root)';
-}
-
-function compactLine(value: string, maxLength: number): string {
-  const normalized = value.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return normalized.length > maxLength ? `${normalized.slice(0, Math.max(0, maxLength - 3))}...` : normalized;
-}
-
-function clampText(value: string, maxLength: number): string {
-  return value.length > maxLength ? `${value.slice(0, Math.max(0, maxLength - 3))}...` : value;
-}
-
 function mapLocalAgentAnalysisResponse(
   command: CommandInput,
   ocrResult: ScreenOcrResponse,
@@ -873,7 +705,9 @@ function mapLocalAgentAnalysisResponse(
 
   return {
     requestId: command.id,
+    provider: 'local-agent',
     status: response.status,
+    intent: command.intent,
     title,
     summary,
     detail: response.detail ?? summary,
