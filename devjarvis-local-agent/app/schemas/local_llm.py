@@ -14,10 +14,6 @@ LocalLlmIntent = Literal[
 
 class LocalLlmHealthResponse(BaseModel):
     available: bool
-    provider: str = "ollama"
-    model: str | None = None
-    baseUrl: str
-    modelRouting: dict[str, str | None] = Field(default_factory=dict)
     warning: str | None = None
 
 
@@ -38,10 +34,6 @@ class LocalLlmAnalyzeRequest(BaseModel):
 
 class LocalLlmAnalyzeResponse(BaseModel):
     status: Literal["completed", "failed"]
-    provider: str = "ollama"
-    model: str | None = None
-    modelRole: str | None = None
-    intent: LocalLlmIntent
     summary: str
     detail: str | None = None
     actionItems: list[str] = Field(default_factory=list)

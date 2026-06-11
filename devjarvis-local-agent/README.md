@@ -34,6 +34,8 @@ curl http://127.0.0.1:17997/internal/local-llm/health
 curl http://127.0.0.1:17997/internal/local-ocr/health
 ```
 
+기본 health 응답은 readiness 판단에 필요한 최소 값만 반환합니다. provider, model, model routing, service version 같은 개발자용 세부 정보는 기본 응답에 포함하지 않습니다.
+
 ## Local OCR
 
 Desktop 화면 명령은 화면 이미지를 NAS로 보내지 않고 Local Agent OCR을 먼저 호출합니다. Local OCR 실패 시 remote OCR로 자동 fallback하지 않습니다.
@@ -97,7 +99,7 @@ ollama pull qwen2.5-coder:7b
 ollama list
 ```
 
-Desktop 화면에는 모델명과 provider를 표시하지 않습니다. 모델명은 `.env`와 문서에서만 관리합니다.
+Desktop 화면과 기본 Local Agent API 응답에는 모델명과 provider를 표시하지 않습니다. 모델명은 `.env`와 문서에서만 관리합니다.
 
 ## 테스트
 

@@ -30,13 +30,16 @@ Desktop
 - Local OCR 미준비: Local OCR 설정을 확인하라고 안내
 - Local LLM 미준비: Ollama와 로컬 모델 설치를 확인하라고 안내
 
-Desktop 내부 state에는 상세 정보를 저장할 수 있지만, 사용자 화면 메시지에는 provider/model/router 상세값을 표시하지 않는다.
+Desktop은 readiness 판단에 필요한 최소 상태만 저장하고, 사용자 화면 메시지에는 provider/model/router 상세값을 표시하지 않는다.
+
+기본 health 응답도 최소화하여 provider, model, modelRouting, baseUrl, service version을 반환하지 않는다.
 
 ## 보안상 고려사항
 
 - Local Assistant 준비 전에는 화면 캡처를 시작하지 않는다.
 - Local OCR 실패 또는 Local LLM 미준비 시 remote OCR/analysis로 자동 fallback하지 않는다.
 - Desktop 사용자 메시지에는 provider, model, intent, OCR provider, analysis provider, internal status, absolute path, rootPathAlias를 표시하지 않는다.
+- 기본 Local Agent health/analyze/extract 응답에서도 provider/model/router 세부 정보를 제거한다.
 - Local Agent와 Ollama는 `127.0.0.1` 기준으로만 사용한다.
 - `.env.example`에는 secret을 넣지 않고 로컬 기본값만 둔다.
 

@@ -7,19 +7,17 @@ from app.schemas.local_llm import LocalLlmAnalyzeRequest, LocalLlmAnalyzeRespons
 
 class StubLocalLlmService:
     async def health(self) -> LocalLlmHealthResponse:
-        return LocalLlmHealthResponse(available=True, model="stub", baseUrl="http://127.0.0.1:11434")
+        return LocalLlmHealthResponse(available=True)
 
     async def analyze(self, request: LocalLlmAnalyzeRequest) -> LocalLlmAnalyzeResponse:
         return LocalLlmAnalyzeResponse(
             status="completed",
-            model="stub",
-            intent=request.intent,
             summary="ok",
             actionItems=["check next step"],
         )
 
 
-def test_local_llm_health() -> None:
+def test_local_llm_health_returns_minimal_readiness() -> None:
     app.dependency_overrides[get_local_llm_service] = lambda: StubLocalLlmService()
     client = TestClient(app)
 
@@ -27,10 +25,15 @@ def test_local_llm_health() -> None:
 
     app.dependency_overrides.clear()
     assert response.status_code == 200
-    assert response.json()["data"]["available"] is True
+    data = response.json()["data"]
+    assert data["available"] is True
+    assert "provider" not in data
+    assert "model" not in data
+    assert "modelRouting" not in data
+    assert "baseUrl" not in data
 
 
-def test_local_llm_analyze() -> None:
+def test_local_llm_analyze_returns_no_model_details() -> None:
     app.dependency_overrides[get_local_llm_service] = lambda: StubLocalLlmService()
     client = TestClient(app)
 
@@ -42,4 +45,9 @@ def test_local_llm_analyze() -> None:
 
     app.dependency_overrides.clear()
     assert response.status_code == 200
-    assert response.json()["data"]["summary"] == "ok"
+    data = response.json()["data"]
+    assert data["summary"] == "ok"
+    assert "provider" not in data
+    assert "model" not in data
+    assert "modelRole" not in data
+    assert "intent" not in data

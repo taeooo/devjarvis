@@ -14,7 +14,6 @@ class StubLocalOcrService:
     async def health(self) -> LocalOcrHealthResponse:
         return LocalOcrHealthResponse(
             available=True,
-            provider="placeholder",
             maxImageBytes=1_500_000,
             maxWidth=4096,
             maxHeight=4096,
@@ -23,7 +22,6 @@ class StubLocalOcrService:
     async def extract(self, request: LocalOcrExtractRequest) -> LocalOcrExtractResponse:
         return LocalOcrExtractResponse(
             requestId=request.commandId or "stub",
-            provider="placeholder",
             status="completed",
             text="hello screen",
             textFound=True,
@@ -38,7 +36,7 @@ class StubLocalOcrService:
         )
 
 
-def test_local_ocr_health() -> None:
+def test_local_ocr_health_returns_minimal_readiness() -> None:
     app.dependency_overrides[get_local_ocr_service] = lambda: StubLocalOcrService()
     client = TestClient(app)
 
@@ -46,10 +44,12 @@ def test_local_ocr_health() -> None:
 
     app.dependency_overrides.clear()
     assert response.status_code == 200
-    assert response.json()["data"]["available"] is True
+    data = response.json()["data"]
+    assert data["available"] is True
+    assert "provider" not in data
 
 
-def test_local_ocr_extract() -> None:
+def test_local_ocr_extract_returns_no_provider_details() -> None:
     app.dependency_overrides[get_local_ocr_service] = lambda: StubLocalOcrService()
     client = TestClient(app)
 
@@ -73,7 +73,9 @@ def test_local_ocr_extract() -> None:
 
     app.dependency_overrides.clear()
     assert response.status_code == 200
-    assert response.json()["data"]["textFound"] is True
+    data = response.json()["data"]
+    assert data["textFound"] is True
+    assert "provider" not in data
 
 
 def test_local_ocr_extract_rejects_invalid_payload() -> None:

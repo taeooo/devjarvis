@@ -147,10 +147,6 @@ export type LocalAgentConnectionState = 'checking' | 'ready' | 'unavailable' | '
 
 export type LocalAgentHealthSnapshot = {
   state: LocalAgentConnectionState;
-  provider: string | null;
-  model: string | null;
-  baseUrl: string | null;
-  modelRouting: Record<string, string | null>;
   warning: string | null;
   checkedAt: string | null;
   errorMessage: string | null;
@@ -158,14 +154,11 @@ export type LocalAgentHealthSnapshot = {
 
 export type LocalAgentAppHealthResponse = {
   status: string;
-  service: string;
-  version: string;
   loopbackOnly: boolean;
 };
 
 export type LocalOcrHealthResponse = {
   available: boolean;
-  provider: string;
   maxImageBytes: number;
   maxWidth: number;
   maxHeight: number;
@@ -174,10 +167,6 @@ export type LocalOcrHealthResponse = {
 
 export type LocalAgentHealthResponse = {
   available: boolean;
-  provider: string;
-  model: string | null;
-  baseUrl: string;
-  modelRouting: Record<string, string | null>;
   warning: string | null;
 };
 
@@ -190,10 +179,6 @@ export type LocalLlmAnalyzeRequest = {
 
 export type LocalLlmAnalyzeResponse = {
   status: 'completed' | 'failed';
-  provider: string;
-  model: string | null;
-  modelRole: string | null;
-  intent: CommandIntent;
   summary: string;
   detail: string | null;
   actionItems: string[];
@@ -216,7 +201,6 @@ export type ScreenOcrRequest = {
 
 export type ScreenOcrResponse = {
   requestId: string;
-  provider: string;
   status: string;
   text: string;
   textFound: boolean;
