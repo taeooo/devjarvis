@@ -14,6 +14,8 @@ FastAPI 기반 로컬 PC 전용 agent입니다. Desktop 앱과 같은 PC에서�
 
 ## 실행
 
+### Git Bash / VSCode terminal
+
 ```bash
 cd /c/projects/devjarvis/devjarvis-local-agent
 py -3.11 -m venv .venv
@@ -26,12 +28,46 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 17997
 
 `.env.example`에는 로컬 실행용 기본값만 포함되어 있습니다. 실제 secret, token, password, key 파일은 넣지 않습니다.
 
+### Windows startup helper
+
+Local Agent를 매번 수동으로 켜는 실수를 줄이기 위해 Windows helper script를 제공합니다.
+
+```bash
+cd /c/projects/devjarvis
+
+cmd.exe /c devjarvis-local-agent\scripts\windows\setup-local-agent.cmd
+cmd.exe /c devjarvis-local-agent\scripts\windows\start-local-agent.cmd
+```
+
+사용자 로그온 시 Local Agent를 자동 시작하려면 아래 명령을 실행합니다.
+
+```bash
+cd /c/projects/devjarvis
+cmd.exe /c devjarvis-local-agent\scripts\windows\register-local-agent-task.cmd
+```
+
+자동 시작 등록을 제거하려면 아래 명령을 실행합니다.
+
+```bash
+cd /c/projects/devjarvis
+cmd.exe /c devjarvis-local-agent\scripts\windows\unregister-local-agent-task.cmd
+```
+
+Startup helper는 `127.0.0.1`에만 바인딩합니다. Local Agent나 Ollama를 `0.0.0.0` 또는 LAN 주소로 열지 않습니다.
+
 ## 확인
 
 ```bash
 curl http://127.0.0.1:17997/health
 curl http://127.0.0.1:17997/internal/local-llm/health
 curl http://127.0.0.1:17997/internal/local-ocr/health
+```
+
+Windows helper 기준으로는 아래 명령을 사용할 수 있습니다.
+
+```bash
+cd /c/projects/devjarvis
+cmd.exe /c devjarvis-local-agent\scripts\windows\check-local-assistant.cmd
 ```
 
 기본 health 응답은 readiness 판단에 필요한 최소 값만 반환합니다. provider, model, model routing, service version 같은 개발자용 세부 정보는 기본 응답에 포함하지 않습니다.

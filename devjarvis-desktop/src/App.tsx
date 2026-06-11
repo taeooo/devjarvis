@@ -207,12 +207,18 @@ function App() {
       tone: voiceState === 'unavailable' ? 'warning' : voiceState === 'listening' ? 'active' : 'idle',
     },
     {
+      key: 'localAgent',
+      label: 'Assistant',
+      value: formatLocalAssistantContextValue(localAgentHealth),
+      tone: getLocalAssistantTone(localAgentHealth),
+    },
+    {
       key: 'rag',
       label: 'RAG',
       value: selectedProject ? 'Project' : 'None',
       tone: selectedProject ? 'ready' : 'idle',
     },
-  ]), [screenContext, selectedProject, voiceState]);
+  ]), [localAgentHealth, screenContext, selectedProject, voiceState]);
 
   async function refreshLocalAssistantReadiness(): Promise<LocalAssistantReadiness> {
     setLocalAgentHealth((current) => ({
@@ -799,6 +805,30 @@ function formatScreenContextValue(screenContext: ScreenContextSnapshot): string 
   }
 
   return 'Ready';
+}
+
+function formatLocalAssistantContextValue(health: LocalAgentHealthSnapshot): string {
+  if (health.state === 'checking') {
+    return 'Checking';
+  }
+
+  if (health.state === 'ready') {
+    return 'Ready';
+  }
+
+  return 'Setup needed';
+}
+
+function getLocalAssistantTone(health: LocalAgentHealthSnapshot): ContextStatusItem['tone'] {
+  if (health.state === 'checking') {
+    return 'active';
+  }
+
+  if (health.state === 'ready') {
+    return 'ready';
+  }
+
+  return 'warning';
 }
 
 function extractProjectName(path: string): string {
