@@ -35,6 +35,7 @@ export type CommandPipelineStage =
   | 'analyzing_screen'
   | 'refreshing_manifest'
   | 'analyzing_project'
+  | 'analyzing_text'
   | 'analysis_ready'
   | 'completed'
   | 'failed';

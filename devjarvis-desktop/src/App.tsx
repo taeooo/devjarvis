@@ -217,7 +217,13 @@ function App() {
       value: selectedProject ? 'Project' : 'None',
       tone: selectedProject ? 'ready' : 'idle',
     },
-  ]), [screenContext, selectedProject, voiceState]);
+    {
+      key: 'localAgent',
+      label: 'Assistant',
+      value: formatLocalAgentContextValue(localAgentHealth),
+      tone: formatLocalAgentContextTone(localAgentHealth),
+    },
+  ]), [screenContext, selectedProject, voiceState, localAgentHealth]);
 
   async function refreshLocalAssistantReadiness(): Promise<LocalAssistantReadiness> {
     setLocalAgentHealth((current) => ({
@@ -364,6 +370,7 @@ function App() {
     const metadata: NonNullable<CommandResult['metadata']> = {};
     let stage: CommandPipelineStage = 'completed';
     let screenAnalysisResult: ScreenAnalysisResponse | null = null;
+    let analysisCompleted = false;
 
     if (plan.needsScreenCapture) {
       updateProcessingStage(plan.command.id, 'received', 'Checking local assistant');
@@ -388,9 +395,8 @@ function App() {
       const analysisResult = await requestScreenAnalysis(plan.command, captured, ocrResult);
       screenAnalysisResult = analysisResult;
       messages.push(formatAnalysisPipelineMessage(analysisResult));
-      metadata.analysisTitle = analysisResult.title;
-      metadata.analysisPreview = analysisResult.preview;
-      metadata.analysisActionItems = analysisResult.actionItems;
+      applyAnalysisMetadata(metadata, analysisResult);
+      analysisCompleted = true;
       stage = 'analysis_ready';
     }
 
@@ -407,9 +413,8 @@ function App() {
         updateProcessingStage(plan.command.id, 'analyzing_project', 'Analyzing project context');
         const projectAnalysisResult = await requestProjectAnalysis(plan.command, projectContext, screenAnalysisResult);
         messages.push(formatAnalysisPipelineMessage(projectAnalysisResult));
-        metadata.analysisTitle = projectAnalysisResult.title;
-        metadata.analysisPreview = projectAnalysisResult.preview;
-        metadata.analysisActionItems = projectAnalysisResult.actionItems;
+        applyAnalysisMetadata(metadata, projectAnalysisResult);
+        analysisCompleted = true;
       } else {
         messages.push('Project context not selected');
         metadata.projectContext = 'not_selected';
@@ -417,8 +422,17 @@ function App() {
       stage = 'analysis_ready';
     }
 
-    if (!plan.needsScreenCapture && !plan.needsProjectManifest) {
-      messages.push('Command queued');
+    if (!analysisCompleted && shouldAnalyzeCommandTextLocally(plan.command)) {
+      updateProcessingStage(plan.command.id, 'analyzing_text', 'Analyzing command locally');
+      const textAnalysisResult = await requestLocalTextAnalysis(plan.command, screenAnalysisResult);
+      messages.push(formatAnalysisPipelineMessage(textAnalysisResult));
+      applyAnalysisMetadata(metadata, textAnalysisResult);
+      analysisCompleted = true;
+      stage = 'analysis_ready';
+    }
+
+    if (!analysisCompleted) {
+      messages.push('Command ready');
     }
 
     return {
@@ -624,6 +638,31 @@ function App() {
     return mapLocalAgentProjectAnalysisResponse(command, projectContext, localResponse);
   }
 
+  async function requestLocalTextAnalysis(
+    command: CommandInput,
+    screenAnalysisResult: ScreenAnalysisResponse | null,
+  ): Promise<ScreenAnalysisResponse> {
+    await ensureLocalReasoningReady();
+
+    const localResponse = await analyzeWithLocalAgent({
+      commandId: command.id,
+      intent: command.intent,
+      text: command.text,
+      context: buildLocalTextAnalysisContext(command, screenAnalysisResult),
+    });
+
+    return mapLocalAgentTextAnalysisResponse(command, localResponse);
+  }
+
+  function applyAnalysisMetadata(
+    metadata: NonNullable<CommandResult['metadata']>,
+    analysisResult: ScreenAnalysisResponse,
+  ) {
+    metadata.analysisTitle = analysisResult.title;
+    metadata.analysisPreview = analysisResult.preview;
+    metadata.analysisActionItems = analysisResult.actionItems;
+  }
+
   function upsertCommandResult(result: CommandResult) {
     setCommandResults((current) => {
       const next = [result, ...current.filter((item) => item.commandId !== result.commandId)];
@@ -796,6 +835,48 @@ function buildProjectAnalysisContext(
   ].join('\n'), 3800);
 }
 
+function buildLocalTextAnalysisContext(
+  command: CommandInput,
+  screenAnalysisResult: ScreenAnalysisResponse | null,
+): string {
+  const relatedScreenSummary = screenAnalysisResult
+    ? compactLine(screenAnalysisResult.summary || screenAnalysisResult.title, 500)
+    : 'none';
+
+  return clampText([
+    'Local text command policy:',
+    '- Analyze only the user-provided command text and optional short screen summary.',
+    '- No screen image, OCR raw dump, file contents, or absolute OS paths are included.',
+    '- Keep the response concise and action-oriented for the DevJarvis result panel.',
+    '',
+    `requestType=${formatLocalAgentTitle(command.intent)}`,
+    `inputLength=${command.text.length}`,
+    `contextMode=${command.contextMode}`,
+    `relatedScreenSummary=${relatedScreenSummary}`,
+  ].join('\n'), 1200);
+}
+
+function mapLocalAgentTextAnalysisResponse(
+  command: CommandInput,
+  response: LocalLlmAnalyzeResponse,
+): ScreenAnalysisResponse {
+  const title = response.status === 'completed' ? formatLocalAgentTitle(command.intent) : 'Local analysis failed';
+  const summary = response.summary || 'Local Agent returned an empty summary.';
+
+  return {
+    requestId: command.id,
+    status: response.status,
+    title,
+    summary,
+    detail: response.detail ?? summary,
+    preview: summarizePreview(summary, response.detail),
+    actionItems: response.actionItems ?? [],
+    textUsedLength: command.text.length,
+    warnings: response.warnings ?? [],
+    analyzedAt: new Date().toISOString(),
+  };
+}
+
 function mapLocalAgentProjectAnalysisResponse(
   command: CommandInput,
   projectContext: ProjectManifestContext,
@@ -964,6 +1045,34 @@ function formatOcrPipelineMessage(result: ScreenOcrResponse): string {
   }
 
   return 'No readable text found';
+}
+
+function shouldAnalyzeCommandTextLocally(command: CommandInput): boolean {
+  return command.text.trim().length > 0;
+}
+
+function formatLocalAgentContextValue(localAgentHealth: LocalAgentHealthSnapshot): string {
+  if (localAgentHealth.state === 'ready') {
+    return 'Ready';
+  }
+
+  if (localAgentHealth.state === 'checking') {
+    return 'Checking';
+  }
+
+  return 'Setup needed';
+}
+
+function formatLocalAgentContextTone(localAgentHealth: LocalAgentHealthSnapshot): ContextStatusItem['tone'] {
+  if (localAgentHealth.state === 'ready') {
+    return 'ready';
+  }
+
+  if (localAgentHealth.state === 'checking') {
+    return 'active';
+  }
+
+  return 'warning';
 }
 
 function formatScreenContextValue(screenContext: ScreenContextSnapshot): string {

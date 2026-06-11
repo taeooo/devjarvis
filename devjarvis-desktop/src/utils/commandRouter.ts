@@ -210,7 +210,7 @@ function resolvePendingSummary(contextMode: ContextMode): string {
     return 'Preparing screen and project context';
   }
 
-  return 'Routing command locally';
+  return 'Analyzing command locally';
 }
 
 function resolveReadySummary(contextMode: ContextMode): string {
@@ -226,7 +226,7 @@ function resolveReadySummary(contextMode: ContextMode): string {
     return 'Context bundle prepared';
   }
 
-  return 'Local command queued';
+  return 'Analyzing command locally';
 }
 
 function resolveNextStep(intent: CommandIntent, contextMode: ContextMode): string {
@@ -250,7 +250,7 @@ function resolveNextStep(intent: CommandIntent, contextMode: ContextMode): strin
     return 'Log parser pending';
   }
 
-  return 'LLM routing pending';
+  return 'Local response pending';
 }
 
 function normalize(text: string): string {
