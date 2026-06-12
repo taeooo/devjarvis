@@ -13,6 +13,10 @@ const MAX_INDEXABLE_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_APPROVED_FILE_COUNT: usize = 8;
 const MAX_APPROVED_FILE_BYTES: u64 = 32 * 1024;
 const MAX_APPROVED_TOTAL_BYTES: u64 = 160 * 1024;
+const MAX_DEEP_INDEX_FILES: usize = 72;
+const MAX_DEEP_INDEX_FILE_BYTES: u64 = 24 * 1024;
+const MAX_DEEP_INDEX_TOTAL_BYTES: u64 = 640 * 1024;
+const MAX_EXTRACTED_ITEMS_PER_FILE: usize = 10;
 const MAIN_WINDOW_LABEL: &str = "main";
 
 #[derive(Debug, Serialize)]
@@ -75,6 +79,49 @@ struct ProjectFileReadResult {
     total_bytes: u64,
     max_file_bytes: u64,
     max_total_bytes: u64,
+}
+
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectDeepIndexFile {
+    relative_path: String,
+    file_name: String,
+    extension: String,
+    language: String,
+    size_bytes: u64,
+    role: String,
+    imports: Vec<String>,
+    endpoints: Vec<String>,
+    symbols: Vec<String>,
+    content_excerpt: String,
+    truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectDeepIndexModule {
+    name: String,
+    file_count: usize,
+    indexed_file_count: usize,
+    runtime_files: Vec<String>,
+    entrypoint_files: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectDeepIndexResult {
+    root_name: String,
+    requested_file_count: usize,
+    indexable_file_count: usize,
+    indexed_file_count: usize,
+    skipped_file_count: usize,
+    total_read_bytes: u64,
+    max_indexed_files: usize,
+    max_file_bytes: u64,
+    max_total_bytes: u64,
+    modules: Vec<ProjectDeepIndexModule>,
+    files: Vec<ProjectDeepIndexFile>,
 }
 
 #[tauri::command]
@@ -248,6 +295,98 @@ fn read_project_file_selection(root_path: String, relative_paths: Vec<String>) -
         total_bytes,
         max_file_bytes: MAX_APPROVED_FILE_BYTES,
         max_total_bytes: MAX_APPROVED_TOTAL_BYTES,
+    })
+}
+
+#[tauri::command]
+fn build_project_deep_index(root_path: String) -> Result<ProjectDeepIndexResult, String> {
+    let root = fs::canonicalize(PathBuf::from(root_path))
+        .map_err(|_| "프로젝트 폴더를 확인할 수 없습니다.".to_string())?;
+
+    if !root.is_dir() {
+        return Err("프로젝트 폴더만 사용할 수 있습니다.".to_string());
+    }
+
+    let root_name = root
+        .file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .filter(|value| !value.is_blank())
+        .unwrap_or_else(|| "DevJarvis Project".to_string());
+
+    let mut manifest_files = Vec::new();
+    for entry in WalkDir::new(&root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(should_enter_directory)
+    {
+        let entry = entry.map_err(|error| format!("프로젝트 파일을 스캔할 수 없습니다: {}", error))?;
+        if !entry.file_type().is_file() && !entry.file_type().is_symlink() {
+            continue;
+        }
+
+        if manifest_files.len() >= MAX_MANIFEST_FILES {
+            break;
+        }
+
+        let Some(file) = build_manifest_file(&root, entry.path())? else {
+            continue;
+        };
+        manifest_files.push(file);
+    }
+
+    let indexable_file_count = manifest_files
+        .iter()
+        .filter(|file| is_deep_index_candidate(file))
+        .count();
+
+    let mut ranked_files = manifest_files
+        .iter()
+        .filter(|file| is_deep_index_candidate(file))
+        .map(|file| (score_deep_index_candidate(file), file))
+        .collect::<Vec<_>>();
+
+    ranked_files.sort_by(|left, right| {
+        right
+            .0
+            .cmp(&left.0)
+            .then_with(|| left.1.relative_path.cmp(&right.1.relative_path))
+    });
+
+    let mut indexed_files = Vec::new();
+    let mut total_read_bytes = 0_u64;
+
+    for (_, file) in ranked_files.into_iter() {
+        if indexed_files.len() >= MAX_DEEP_INDEX_FILES {
+            break;
+        }
+
+        if total_read_bytes >= MAX_DEEP_INDEX_TOTAL_BYTES {
+            break;
+        }
+
+        let read_budget = MAX_DEEP_INDEX_FILE_BYTES.min(MAX_DEEP_INDEX_TOTAL_BYTES - total_read_bytes);
+        let Some(index_file) = read_deep_index_file(&root, file, read_budget)? else {
+            continue;
+        };
+        total_read_bytes += index_file.content_excerpt.len() as u64;
+        indexed_files.push(index_file);
+    }
+
+    let modules = build_deep_index_modules(&manifest_files, &indexed_files);
+    let skipped_file_count = indexable_file_count.saturating_sub(indexed_files.len());
+
+    Ok(ProjectDeepIndexResult {
+        root_name,
+        requested_file_count: manifest_files.len(),
+        indexable_file_count,
+        indexed_file_count: indexed_files.len(),
+        skipped_file_count,
+        total_read_bytes,
+        max_indexed_files: MAX_DEEP_INDEX_FILES,
+        max_file_bytes: MAX_DEEP_INDEX_FILE_BYTES,
+        max_total_bytes: MAX_DEEP_INDEX_TOTAL_BYTES,
+        modules,
+        files: indexed_files,
     })
 }
 
@@ -534,6 +673,359 @@ fn is_sensitive_line(line: &str) -> bool {
     .any(|marker| lower.contains(marker))
 }
 
+
+fn is_deep_index_candidate(file: &ManifestFile) -> bool {
+    if file.excluded {
+        return false;
+    }
+
+    is_source_or_config_extension(&file.extension, &file.file_name)
+}
+
+fn is_source_or_config_extension(extension: &str, file_name: &str) -> bool {
+    let lower_name = file_name.to_ascii_lowercase();
+    matches!(
+        extension,
+        "ts"
+            | "tsx"
+            | "js"
+            | "jsx"
+            | "mjs"
+            | "cjs"
+            | "java"
+            | "py"
+            | "rs"
+            | "kt"
+            | "kts"
+            | "go"
+            | "sql"
+            | "json"
+            | "yaml"
+            | "yml"
+            | "toml"
+            | "xml"
+            | "md"
+            | "sh"
+            | "cmd"
+            | "bat"
+            | "ps1"
+    ) || matches!(lower_name.as_str(), "dockerfile" | "makefile")
+}
+
+fn score_deep_index_candidate(file: &ManifestFile) -> i32 {
+    let path = file.relative_path.to_ascii_lowercase();
+    let name = file.file_name.to_ascii_lowercase();
+    let role = classify_project_file_role(&file.relative_path, &file.file_name, &file.extension);
+    let mut score = 0;
+
+    if role == "runtime-boundary" {
+        score += 90;
+    }
+    if role == "entrypoint" {
+        score += 80;
+    }
+    if role == "api-boundary" {
+        score += 70;
+    }
+    if role == "service" {
+        score += 62;
+    }
+    if role == "ui-boundary" {
+        score += 58;
+    }
+    if role == "config" {
+        score += 52;
+    }
+    if path.contains("/src/") {
+        score += 15;
+    }
+    if path.contains("/app/") || path.contains("/main/") {
+        score += 12;
+    }
+    if file.size_bytes > 0 && file.size_bytes <= 48 * 1024 {
+        score += 8;
+    }
+    if name.contains("test") || path.contains("/tests/") || path.contains("/test/") {
+        score -= 30;
+    }
+
+    score
+}
+
+fn read_deep_index_file(root: &Path, file: &ManifestFile, read_limit: u64) -> Result<Option<ProjectDeepIndexFile>, String> {
+    if !is_safe_relative_path(&file.relative_path) {
+        return Ok(None);
+    }
+
+    let path = root.join(&file.relative_path);
+    let link_metadata = match fs::symlink_metadata(&path) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+
+    if link_metadata.file_type().is_symlink() {
+        return Ok(None);
+    }
+
+    let canonical_path = match fs::canonicalize(&path) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+
+    if !canonical_path.starts_with(root) || !canonical_path.is_file() {
+        return Ok(None);
+    }
+
+    let mut opened = File::open(&canonical_path).map_err(|_| "프로젝트 인덱스 파일을 열 수 없습니다.".to_string())?;
+    let mut buffer = vec![0_u8; read_limit as usize];
+    let read = opened
+        .read(&mut buffer)
+        .map_err(|_| "프로젝트 인덱스 파일을 읽을 수 없습니다.".to_string())?;
+    buffer.truncate(read);
+
+    if looks_binary(&buffer) {
+        return Ok(None);
+    }
+
+    let content = String::from_utf8_lossy(&buffer).to_string();
+    let redacted = redact_sensitive_lines(&content);
+    let role = classify_project_file_role(&file.relative_path, &file.file_name, &file.extension);
+    let imports = extract_import_lines(&redacted);
+    let endpoints = extract_endpoint_literals(&redacted);
+    let symbols = extract_symbol_lines(&redacted);
+
+    Ok(Some(ProjectDeepIndexFile {
+        relative_path: file.relative_path.clone(),
+        file_name: file.file_name.clone(),
+        extension: file.extension.clone(),
+        language: file.language.clone(),
+        size_bytes: file.size_bytes,
+        role,
+        imports,
+        endpoints,
+        symbols,
+        content_excerpt: redacted,
+        truncated: file.size_bytes > read as u64,
+    }))
+}
+
+fn looks_binary(buffer: &[u8]) -> bool {
+    buffer.iter().take(2048).any(|byte| *byte == 0)
+}
+
+fn classify_project_file_role(relative_path: &str, file_name: &str, extension: &str) -> String {
+    let path = relative_path.to_ascii_lowercase();
+    let name = file_name.to_ascii_lowercase();
+
+    if matches!(
+        name.as_str(),
+        "package.json"
+            | "cargo.toml"
+            | "pyproject.toml"
+            | "requirements.txt"
+            | "build.gradle"
+            | "settings.gradle"
+            | "pom.xml"
+            | "dockerfile"
+            | "docker-compose.yml"
+            | "tauri.conf.json"
+    ) {
+        return "runtime-boundary".to_string();
+    }
+
+    if matches!(name.as_str(), "main.tsx" | "main.ts" | "app.tsx" | "app.ts" | "main.rs" | "main.py")
+        || path.ends_with("application.java")
+    {
+        return "entrypoint".to_string();
+    }
+
+    if path.contains("/controller/") || path.contains("/api/") || path.contains("/routes/") || name.contains("controller") {
+        return "api-boundary".to_string();
+    }
+
+    if path.contains("/service/") || name.contains("service") {
+        return "service".to_string();
+    }
+
+    if path.contains("/repository/") || name.contains("repository") {
+        return "repository".to_string();
+    }
+
+    if path.contains("/components/") || matches!(extension, "tsx" | "jsx") {
+        return "ui-boundary".to_string();
+    }
+
+    if name.starts_with("vite.config.")
+        || name.starts_with("tsconfig")
+        || name.starts_with("application.")
+        || matches!(extension, "json" | "yaml" | "yml" | "toml" | "xml")
+    {
+        return "config".to_string();
+    }
+
+    "source".to_string()
+}
+
+fn extract_import_lines(content: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("import ")
+            || trimmed.starts_with("from ")
+            || trimmed.starts_with("use ")
+            || trimmed.starts_with("package ")
+        {
+            push_unique_limited(&mut values, trimmed, MAX_EXTRACTED_ITEMS_PER_FILE);
+        }
+    }
+    values
+}
+
+fn extract_symbol_lines(content: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("export function ")
+            || trimmed.starts_with("function ")
+            || trimmed.starts_with("export class ")
+            || trimmed.starts_with("class ")
+            || trimmed.starts_with("interface ")
+            || trimmed.starts_with("type ")
+            || trimmed.starts_with("def ")
+            || trimmed.starts_with("async def ")
+            || trimmed.starts_with("fn ")
+            || trimmed.contains(" class ")
+            || trimmed.contains(" interface ")
+        {
+            push_unique_limited(&mut values, trimmed, MAX_EXTRACTED_ITEMS_PER_FILE);
+        }
+    }
+    values
+}
+
+fn extract_endpoint_literals(content: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("Mapping")
+            || trimmed.contains("fetch(")
+            || trimmed.contains("axios")
+            || trimmed.contains("APIRouter")
+            || trimmed.contains("router.")
+            || trimmed.contains("invoke(")
+        {
+            for literal in extract_quoted_literals(trimmed) {
+                if literal.starts_with('/') || literal.contains("127.0.0.1") || literal.contains("localhost") {
+                    push_unique_limited(&mut values, &literal, MAX_EXTRACTED_ITEMS_PER_FILE);
+                }
+            }
+            if values.len() < MAX_EXTRACTED_ITEMS_PER_FILE {
+                push_unique_limited(&mut values, trimmed, MAX_EXTRACTED_ITEMS_PER_FILE);
+            }
+        }
+    }
+    values
+}
+
+fn extract_quoted_literals(line: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    for quote in ['\'', '"'] {
+        let mut current = String::new();
+        let mut inside = false;
+        for character in line.chars() {
+            if character == quote {
+                if inside && !current.is_empty() {
+                    values.push(current.clone());
+                    current.clear();
+                }
+                inside = !inside;
+                continue;
+            }
+
+            if inside {
+                current.push(character);
+            }
+        }
+    }
+    values
+}
+
+fn push_unique_limited(values: &mut Vec<String>, value: &str, limit: usize) {
+    if values.len() >= limit {
+        return;
+    }
+
+    let normalized = value.trim();
+    if normalized.is_empty() || values.iter().any(|existing| existing == normalized) {
+        return;
+    }
+
+    values.push(normalized.chars().take(180).collect());
+}
+
+fn build_deep_index_modules(manifest_files: &[ManifestFile], indexed_files: &[ProjectDeepIndexFile]) -> Vec<ProjectDeepIndexModule> {
+    let mut names = Vec::<String>::new();
+    for file in manifest_files.iter().filter(|item| !item.excluded) {
+        let name = top_level_name(&file.relative_path, &file.file_name);
+        if !names.iter().any(|existing| existing == &name) {
+            names.push(name);
+        }
+    }
+
+    let mut modules = names
+        .into_iter()
+        .map(|name| {
+            let file_count = manifest_files
+                .iter()
+                .filter(|file| !file.excluded && top_level_name(&file.relative_path, &file.file_name) == name)
+                .count();
+            let indexed_in_module = indexed_files
+                .iter()
+                .filter(|file| top_level_name(&file.relative_path, &file.file_name) == name)
+                .collect::<Vec<_>>();
+            let runtime_files = indexed_in_module
+                .iter()
+                .filter(|file| file.role == "runtime-boundary")
+                .map(|file| file.relative_path.clone())
+                .take(6)
+                .collect::<Vec<_>>();
+            let entrypoint_files = indexed_in_module
+                .iter()
+                .filter(|file| file.role == "entrypoint")
+                .map(|file| file.relative_path.clone())
+                .take(6)
+                .collect::<Vec<_>>();
+
+            ProjectDeepIndexModule {
+                name,
+                file_count,
+                indexed_file_count: indexed_in_module.len(),
+                runtime_files,
+                entrypoint_files,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    modules.sort_by(|left, right| {
+        right
+            .indexed_file_count
+            .cmp(&left.indexed_file_count)
+            .then_with(|| right.file_count.cmp(&left.file_count))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    modules.truncate(16);
+    modules
+}
+
+fn top_level_name(relative_path: &str, file_name: &str) -> String {
+    relative_path
+        .split('/')
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(file_name)
+        .to_string()
+}
+
 fn summarize(files: &[ManifestFile]) -> ScanSummary {
     let mut summary = ScanSummary {
         requested_file_count: files.len(),
@@ -682,6 +1174,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             scan_project_manifest,
             read_project_file_selection,
+            build_project_deep_index,
             show_main_window,
             hide_main_window
         ])

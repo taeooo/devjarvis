@@ -43,7 +43,7 @@ import type {
   SystemStatus,
   VoiceState,
 } from './types/jarvisCommand';
-import type { ManifestFile, ManifestRegisterResponse, ProjectFileReadResult, ProjectResponse, ProjectScanResult } from './types/projectScanner';
+import type { ManifestFile, ManifestRegisterResponse, ProjectDeepIndexFile, ProjectDeepIndexResult, ProjectFileReadResult, ProjectResponse, ProjectScanResult } from './types/projectScanner';
 
 type SelectedProject = {
   rootPath: string;
@@ -104,6 +104,7 @@ function App() {
   const [registeredProject, setRegisteredProject] = useState<ProjectResponse | null>(null);
   const [latestSummary, setLatestSummary] = useState<ManifestRegisterResponse | null>(null);
   const [latestProjectScan, setLatestProjectScan] = useState<ProjectScanResult | null>(null);
+  const [latestProjectIndex, setLatestProjectIndex] = useState<ProjectDeepIndexResult | null>(null);
   const [micAvailable, setMicAvailable] = useState<boolean | null>(null);
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
   const [screenContext, setScreenContext] = useState<ScreenContextSnapshot>(initialScreenContext);
@@ -297,6 +298,7 @@ function App() {
       setRegisteredProject(null);
       setLatestSummary(null);
       setLatestProjectScan(null);
+      setLatestProjectIndex(null);
       setSystemMessage('Project context selected.');
     } catch (caught) {
       setErrorMessage(toErrorMessage(caught));
@@ -523,6 +525,7 @@ function App() {
     let ocrResult: ScreenOcrResponse | null = null;
     let projectScan: ProjectScanResult | null = null;
     let projectDiagnosis: ProjectAwareScreenDiagnosis | null = null;
+    let projectIndex: ProjectDeepIndexResult | null = null;
     const shouldUseProjectForScreenDiagnosis = plan.command.intent === 'screen_error_analysis' && selectedProject !== null;
 
     if (plan.needsScreenCapture) {
@@ -551,7 +554,10 @@ function App() {
       if (selectedProject) {
         const summary = await refreshProjectManifest(selectedProject);
         projectScan = summary.scan;
-        if (shouldUseProjectForScreenDiagnosis) {
+        if (shouldUseProjectForScreenDiagnosis && selectedProject) {
+          projectIndex = await buildProjectDeepIndex(selectedProject);
+          messages.push('Project index ready');
+        } else if (shouldUseProjectForScreenDiagnosis) {
           messages.push('Project context ready');
         }
         metadata.manifestTargetFileCount = summary.registration.targetFileCount;
@@ -578,7 +584,7 @@ function App() {
         metadata.projectAwareFileCandidateCount = projectDiagnosis.relatedFiles.length;
       }
 
-      const analysisResult = await requestScreenAnalysis(plan.command, captured, ocrResult, projectDiagnosis);
+      const analysisResult = await requestScreenAnalysis(plan.command, captured, ocrResult, projectDiagnosis, projectIndex);
       messages.push(formatAnalysisPipelineMessage(analysisResult));
       metadata.analysisTitle = analysisResult.title;
       metadata.analysisSummary = analysisResult.summary;
@@ -592,12 +598,12 @@ function App() {
     if (!plan.needsScreenCapture && plan.needsProjectManifest && selectedProject && projectScan) {
       updateProcessingStage(plan.command.id, 'analyzing_project', 'Analyzing project');
       await ensureLocalAssistantReady();
-      const analysis = await requestProjectAnalysis(plan.command, projectScan);
       const projectFileCandidates = buildProjectFileCandidates(projectScan.files);
+      const analysis = await requestProjectAnalysis(plan.command, projectScan, projectFileCandidates);
       messages.push(analysis.summary);
       metadata.relatedProjectFiles = projectFileCandidates;
       metadata.projectAwareFileCandidateCount = projectFileCandidates.length;
-      metadata.projectFileReadMode = 'candidate_only';
+      metadata.projectFileReadMode = 'deep_index';
       metadata.analysisTitle = analysis.title;
       metadata.analysisSummary = analysis.summary;
       metadata.analysisDetail = analysis.detail;
@@ -740,6 +746,7 @@ function App() {
     captured: ScreenCaptureResult,
     ocrResult: ScreenOcrResponse,
     projectDiagnosis: ProjectAwareScreenDiagnosis | null = null,
+    projectIndex: ProjectDeepIndexResult | null = null,
   ): Promise<ScreenAnalysisResponse> {
     setScreenContext((current) => ({
       ...current,
@@ -749,7 +756,7 @@ function App() {
     }));
 
     try {
-      const response = await requestLocalScreenAnalysis(command, captured, ocrResult, projectDiagnosis);
+      const response = await requestLocalScreenAnalysis(command, captured, ocrResult, projectDiagnosis, projectIndex);
 
       setScreenContext((current) => ({
         ...current,
@@ -776,6 +783,7 @@ function App() {
     captured: ScreenCaptureResult,
     ocrResult: ScreenOcrResponse,
     projectDiagnosis: ProjectAwareScreenDiagnosis | null,
+    projectIndex: ProjectDeepIndexResult | null,
   ): Promise<ScreenAnalysisResponse> {
     if (!ocrResult.textFound || ocrResult.text.trim().length === 0) {
       return {
@@ -798,7 +806,7 @@ function App() {
       commandId: command.id,
       intent: command.intent,
       text: ocrResult.text,
-      context: buildLocalAnalysisContext(command, captured, ocrResult, projectDiagnosis),
+      context: buildLocalAnalysisContext(command, captured, ocrResult, projectDiagnosis, projectIndex),
     });
 
     return mapLocalAgentAnalysisResponse(command, ocrResult, localResponse);
@@ -832,6 +840,14 @@ function App() {
     }
   }
 
+
+
+  async function buildProjectDeepIndex(projectContext: SelectedProject): Promise<ProjectDeepIndexResult> {
+    const index = await invoke<ProjectDeepIndexResult>('build_project_deep_index', { rootPath: projectContext.rootPath });
+    setLatestProjectIndex(index);
+    return index;
+  }
+
   function resetStaleContextForCommand(command: CommandInput) {
     if (command.contextMode === 'screen' || command.contextMode === 'auto') return;
 
@@ -842,27 +858,39 @@ function App() {
     }));
   }
 
-  async function requestProjectAnalysis(command: CommandInput, scanResult: ProjectScanResult): Promise<ScreenAnalysisResponse> {
-    const candidates = buildProjectFileCandidates(scanResult.files);
-    const summary = buildProjectArchitectureSummary(scanResult, candidates);
-    const detail = buildProjectArchitectureDetail(scanResult, candidates);
+  async function requestProjectAnalysis(
+    command: CommandInput,
+    scanResult: ProjectScanResult,
+    candidates: RelatedProjectFileCandidate[],
+  ): Promise<ScreenAnalysisResponse> {
+    if (!selectedProject) {
+      throw new Error('Project context is not selected.');
+    }
+
+    const deepIndex = await buildProjectDeepIndex(selectedProject);
+    const context = buildProjectDeepIndexContext(scanResult, deepIndex, candidates);
+    const text = buildProjectDeepIndexText(deepIndex);
+    const response = await analyzeWithLocalAgent({
+      commandId: command.id,
+      intent: command.intent,
+      text,
+      context,
+    });
+
+    const analysis = mapLocalAgentAnalysisResponse(command, { textLength: text.length } as ScreenOcrResponse, response);
+    const fallbackSummary = buildProjectDeepIndexSummary(deepIndex);
+    const fallbackDetail = buildProjectDeepIndexDetail(deepIndex);
 
     return {
-      requestId: command.id,
-      provider: 'local-agent',
-      status: 'completed',
-      intent: command.intent,
-      title: '프로젝트 파일 검토 준비 완료',
-      summary,
-      detail,
-      preview: summary,
-      actionItems: [
-        '전문 보기에서 후보 파일을 선택해 2차 분석을 실행하세요.',
-        '민감 파일은 제외되며 선택 파일만 로컬에서 읽습니다.',
-      ],
-      textUsedLength: 0,
-      warnings: [],
-      analyzedAt: new Date().toISOString(),
+      ...analysis,
+      title: '프로젝트 전체 흐름 분석',
+      summary: normalizeAnalysisText(analysis.summary, fallbackSummary),
+      detail: normalizeAnalysisText(analysis.detail ?? '', fallbackDetail),
+      preview: summarizePreview(normalizeAnalysisText(analysis.summary, fallbackSummary), analysis.detail ?? fallbackDetail),
+      actionItems: analysis.actionItems.length > 0
+        ? analysis.actionItems
+        : ['에러 화면 진단 시 로컬 프로젝트 인덱스와 OCR 결과를 함께 사용하세요.'],
+      textUsedLength: text.length,
     };
   }
 
@@ -973,6 +1001,151 @@ function buildFailureNextStep(message: string): string {
   }
 
   return 'Check permission or command context';
+}
+
+
+function buildProjectDeepIndexContext(
+  scanResult: ProjectScanResult,
+  deepIndex: ProjectDeepIndexResult,
+  candidates: RelatedProjectFileCandidate[],
+): string {
+  const lines = [
+    'analysisMode=localProjectDeepIndex',
+    'sourcePolicy=localOnly',
+    `rootName=${scanResult.rootName}`,
+    `manifestTargetFiles=${scanResult.summary.targetFileCount}`,
+    `manifestExcludedFiles=${scanResult.summary.excludedFileCount}`,
+    `indexedFiles=${deepIndex.indexedFileCount}`,
+    `indexableFiles=${deepIndex.indexableFileCount}`,
+    `skippedIndexableFiles=${deepIndex.skippedFileCount}`,
+    '[modules]',
+    ...deepIndex.modules.slice(0, 12).map((module) => `${module.name}: files=${module.fileCount}, indexed=${module.indexedFileCount}`),
+    '[candidateRelativePaths]',
+    ...candidates.slice(0, 16).map((file) => `${file.relativePath} (${file.matchReasons.join('|')})`),
+  ];
+
+  return limitLines(lines.join('\n'), 3900);
+}
+
+function buildProjectDeepIndexText(deepIndex: ProjectDeepIndexResult): string {
+  const sections = [
+    '[Project Deep Index]',
+    buildProjectDeepIndexDetail(deepIndex),
+    '',
+    '[Indexed Source Excerpts]',
+    ...deepIndex.files.map((file) => formatIndexedFileForAnalysis(file)),
+  ];
+
+  return limitLines(sections.join('\n\n'), 11500);
+}
+
+function formatIndexedFileForAnalysis(file: ProjectDeepIndexFile): string {
+  return [
+    `--- FILE ${file.relativePath}`,
+    `role=${file.role} language=${file.language || 'unknown'} extension=${file.extension || 'none'} size=${file.sizeBytes} truncated=${file.truncated}`,
+    file.imports.length > 0 ? `[imports]\n${file.imports.join('\n')}` : '',
+    file.endpoints.length > 0 ? `[endpoints]\n${file.endpoints.join('\n')}` : '',
+    file.symbols.length > 0 ? `[symbols]\n${file.symbols.join('\n')}` : '',
+    '[contentExcerpt]',
+    file.contentExcerpt,
+  ].filter(Boolean).join('\n');
+}
+
+function buildProjectDeepIndexSummary(deepIndex: ProjectDeepIndexResult): string {
+  const moduleNames = deepIndex.modules.slice(0, 5).map((module) => module.name).join(', ');
+  return `로컬에서 안전한 소스 ${deepIndex.indexedFileCount}개를 읽어 프로젝트 흐름 인덱스를 만들었습니다. 주요 모듈은 ${moduleNames || deepIndex.rootName}입니다.`;
+}
+
+function buildProjectDeepIndexDetail(deepIndex: ProjectDeepIndexResult): string {
+  const roleCounts = countBy(deepIndex.files, (file) => file.role);
+  const lines = [
+    '[Local Project Flow Index]',
+    `indexedFiles=${deepIndex.indexedFileCount}/${deepIndex.indexableFileCount}`,
+    `readBytes=${deepIndex.totalReadBytes}/${deepIndex.maxTotalBytes}`,
+    `skippedIndexableFiles=${deepIndex.skippedFileCount}`,
+    '',
+    '[Module Map]',
+    ...deepIndex.modules.slice(0, 12).map((module) => `- ${module.name}: files=${module.fileCount}, indexed=${module.indexedFileCount}`),
+    '',
+    '[Role Map]',
+    ...Array.from(roleCounts.entries()).map(([role, count]) => `- ${role}: ${count}`),
+    '',
+    '[Runtime / Entrypoint Files]',
+    ...deepIndex.files
+      .filter((file) => file.role === 'runtime-boundary' || file.role === 'entrypoint')
+      .slice(0, 18)
+      .map((file) => `- ${file.relativePath}`),
+    '',
+    '[API / Service / UI Boundary Files]',
+    ...deepIndex.files
+      .filter((file) => ['api-boundary', 'service', 'ui-boundary', 'repository'].includes(file.role))
+      .slice(0, 24)
+      .map((file) => `- ${file.relativePath} (${file.role})`),
+    '',
+    '[Security Boundary]',
+    '- 파일 원문은 이 PC에서만 읽고 redaction 후 Local Agent로 전달합니다.',
+    '- NAS/AI Server로 파일 원문을 보내지 않습니다.',
+  ];
+
+  return lines.join('\n');
+}
+
+function buildProjectDeepIndexScreenContext(deepIndex: ProjectDeepIndexResult): string {
+  const lines = [
+    '[projectDeepIndexForScreenDiagnosis]',
+    `indexedFiles=${deepIndex.indexedFileCount}`,
+    '[modules]',
+    ...deepIndex.modules.slice(0, 8).map((module) => `${module.name}: indexed=${module.indexedFileCount}`),
+    '[flowFiles]',
+    ...deepIndex.files
+      .filter((file) => ['runtime-boundary', 'entrypoint', 'api-boundary', 'service', 'ui-boundary', 'repository'].includes(file.role))
+      .slice(0, 28)
+      .map((file) => `${file.relativePath} (${file.role})`),
+    '[endpoints]',
+    ...deepIndex.files.flatMap((file) => file.endpoints.map((endpoint) => `${file.relativePath}: ${endpoint}`)).slice(0, 18),
+  ];
+
+  return lines.join('\n');
+}
+
+function normalizeAnalysisText(value: string, fallback: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || looksLikeRawJson(trimmed)) {
+    return fallback;
+  }
+  return trimmed;
+}
+
+function looksLikeRawJson(value: string): boolean {
+  const trimmed = value.trim();
+  return (trimmed.startsWith('{') && trimmed.endsWith('}')) || trimmed.startsWith('```json');
+}
+
+function countBy<T>(items: T[], getKey: (item: T) => string): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    const key = getKey(item);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function limitLines(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  const lines: string[] = [];
+  let size = 0;
+  for (const line of value.split(/\r?\n/)) {
+    if (size + line.length + 1 > maxChars) {
+      break;
+    }
+    lines.push(line);
+    size += line.length + 1;
+  }
+  lines.push('[TRUNCATED_BY_LOCAL_BUDGET]');
+  return lines.join('\n');
 }
 
 function buildProjectFileCandidates(files: ManifestFile[]): RelatedProjectFileCandidate[] {
@@ -1128,6 +1301,7 @@ function buildLocalAnalysisContext(
   captured: ScreenCaptureResult,
   ocrResult: ScreenOcrResponse,
   projectDiagnosis: ProjectAwareScreenDiagnosis | null = null,
+  projectIndex: ProjectDeepIndexResult | null = null,
 ): string {
   const userRequest = command.text.length > 240 ? `${command.text.slice(0, 237)}...` : command.text;
   const baseContext = [
@@ -1141,7 +1315,11 @@ function buildLocalAnalysisContext(
     baseContext.push(formatProjectDiagnosisContext(projectDiagnosis));
   }
 
-  return baseContext.join('\n');
+  if (projectIndex) {
+    baseContext.push(buildProjectDeepIndexScreenContext(projectIndex));
+  }
+
+  return limitLines(baseContext.join('\n'), 3900);
 }
 
 function mapLocalAgentAnalysisResponse(

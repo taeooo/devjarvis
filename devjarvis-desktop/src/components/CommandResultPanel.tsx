@@ -12,7 +12,7 @@ type CommandResultPanelProps = {
 
 export function CommandResultPanel({ results, onAnalyzeProjectFiles }: CommandResultPanelProps) {
   const [selectedResult, setSelectedResult] = useState<CommandResult | null>(null);
-  const [currentResult, ...history결과] = results;
+  const [currentResult, ...historyResults] = results;
 
   return (
     <aside className="result-panel" aria-label="Command results">
@@ -30,10 +30,10 @@ export function CommandResultPanel({ results, onAnalyzeProjectFiles }: CommandRe
               <span className="result-group-label">현재</span>
               <ResultCard result={currentResult} onOpen={() => setSelectedResult(currentResult)} />
             </section>
-            {history결과.length > 0 && (
+            {historyResults.length > 0 && (
               <section className="result-group" aria-label="Previous command results">
                 <span className="result-group-label">히스토리</span>
-                {history결과.slice(0, MAX_RENDERED_HISTORY).map((result) => (
+                {historyResults.slice(0, MAX_RENDERED_HISTORY).map((result) => (
                   <ResultCard key={result.id} result={result} compact onOpen={() => setSelectedResult(result)} />
                 ))}
               </section>
@@ -180,9 +180,9 @@ function ResultDetailDialog({ result, onClose, onAnalyzeProjectFiles }: ResultDe
 
           {relatedFiles.length > 0 && (
             <section>
-              <h3>선택 파일 분석</h3>
+              <h3>추가 선택 파일 분석</h3>
               <p className="detail-helper-text">
-                로컬에서 읽을 파일만 선택하세요. 민감 파일은 정책상 차단됩니다.
+                더 확인할 파일만 선택하세요. 민감 파일은 정책상 차단됩니다.
               </p>
               <div className="related-file-list related-file-list-selectable">
                 {relatedFiles.map((file) => (

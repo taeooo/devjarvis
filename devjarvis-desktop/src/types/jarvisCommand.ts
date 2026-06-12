@@ -79,7 +79,10 @@ export type CommandResultMetadata = {
   manifestTargetFileCount?: number;
   manifestExcludedFileCount?: number;
   projectContext?: 'selected' | 'not_selected';
-  projectFileReadMode?: 'candidate_only' | 'approved_selection';
+  projectFileReadMode?: 'candidate_only' | 'approved_selection' | 'deep_index';
+  projectIndexFileCount?: number;
+  projectIndexModuleCount?: number;
+  projectIndexReadBytes?: number;
   projectSelectedFiles?: string[];
   projectRejectedFiles?: string[];
   ocrProvider?: string;
