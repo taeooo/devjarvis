@@ -25,6 +25,14 @@ import {
   formatProjectDiagnosisContext,
   type ProjectAwareScreenDiagnosis,
 } from './utils/projectScreenDiagnosis';
+import {
+  buildScreenProjectIndexActionItems,
+  buildScreenProjectIndexDetail,
+  buildScreenProjectIndexDiagnosis,
+  buildScreenProjectIndexSummary,
+  formatScreenProjectIndexContext,
+  type ScreenProjectIndexDiagnosis,
+} from './utils/screenProjectIndexDiagnosis';
 import { captureScreenFrame, isScreenCaptureSupported } from './utils/screenCapture';
 import type {
   CommandInput,
@@ -214,12 +222,6 @@ function App() {
             : 'idle',
     },
     {
-      key: 'project',
-      label: 'Project',
-      value: selectedProject ? 'Selected' : 'Not selected',
-      tone: selectedProject ? 'ready' : 'idle',
-    },
-    {
       key: 'localAgent',
       label: 'Assistant',
       value: formatLocalAssistantContextValue(localAgentHealth.state),
@@ -239,13 +241,7 @@ function App() {
           ? 'warning'
           : 'idle',
     },
-    {
-      key: 'rag',
-      label: 'RAG',
-      value: selectedProject ? 'Project' : 'None',
-      tone: selectedProject ? 'ready' : 'idle',
-    },
-  ]), [screenContext, selectedProject, localAgentHealth.state, isProcessingCommand, lastCommand, voiceState]);
+  ]), [screenContext, localAgentHealth.state, isProcessingCommand, lastCommand, voiceState]);
 
   async function refreshLocalAssistantReadiness(): Promise<LocalAssistantReadiness> {
     setLocalAgentHealth((current) => ({
@@ -531,6 +527,7 @@ function App() {
     let ocrResult: ScreenOcrResponse | null = null;
     let projectScan: ProjectScanResult | null = null;
     let projectDiagnosis: ProjectAwareScreenDiagnosis | null = null;
+    let projectIndexDiagnosis: ScreenProjectIndexDiagnosis | null = null;
     let projectIndex: ProjectDeepIndexResult | null = null;
     const shouldUseProjectForScreenDiagnosis = plan.command.intent === 'screen_error_analysis' && selectedProject !== null;
 
@@ -585,12 +582,19 @@ function App() {
 
       if (shouldUseProjectForScreenDiagnosis && projectScan && ocrResult.textFound) {
         projectDiagnosis = buildProjectAwareScreenDiagnosis(ocrResult.text, projectScan.files);
-        metadata.relatedProjectFiles = projectDiagnosis.relatedFiles;
-        metadata.projectAwareSignalCount = projectDiagnosis.signals.length;
-        metadata.projectAwareFileCandidateCount = projectDiagnosis.relatedFiles.length;
+        if (projectIndex) {
+          projectIndexDiagnosis = buildScreenProjectIndexDiagnosis(ocrResult.text, projectIndex);
+        }
+        const relatedProjectFiles = mergeRelatedProjectFiles(
+          projectIndexDiagnosis?.relatedFiles ?? [],
+          projectDiagnosis.relatedFiles,
+        );
+        metadata.relatedProjectFiles = relatedProjectFiles;
+        metadata.projectAwareSignalCount = (projectIndexDiagnosis?.signals.length ?? 0) + projectDiagnosis.signals.length;
+        metadata.projectAwareFileCandidateCount = relatedProjectFiles.length;
       }
 
-      const analysisResult = await requestScreenAnalysis(plan.command, captured, ocrResult, projectDiagnosis, projectIndex);
+      const analysisResult = await requestScreenAnalysis(plan.command, captured, ocrResult, projectDiagnosis, projectIndex, projectIndexDiagnosis);
       messages.push(formatAnalysisPipelineMessage(analysisResult));
       metadata.analysisTitle = analysisResult.title;
       metadata.analysisSummary = analysisResult.summary;
@@ -753,6 +757,7 @@ function App() {
     ocrResult: ScreenOcrResponse,
     projectDiagnosis: ProjectAwareScreenDiagnosis | null = null,
     projectIndex: ProjectDeepIndexResult | null = null,
+    projectIndexDiagnosis: ScreenProjectIndexDiagnosis | null = null,
   ): Promise<ScreenAnalysisResponse> {
     setScreenContext((current) => ({
       ...current,
@@ -762,7 +767,7 @@ function App() {
     }));
 
     try {
-      const response = await requestLocalScreenAnalysis(command, captured, ocrResult, projectDiagnosis, projectIndex);
+      const response = await requestLocalScreenAnalysis(command, captured, ocrResult, projectDiagnosis, projectIndex, projectIndexDiagnosis);
 
       setScreenContext((current) => ({
         ...current,
@@ -790,6 +795,7 @@ function App() {
     ocrResult: ScreenOcrResponse,
     projectDiagnosis: ProjectAwareScreenDiagnosis | null,
     projectIndex: ProjectDeepIndexResult | null,
+    projectIndexDiagnosis: ScreenProjectIndexDiagnosis | null,
   ): Promise<ScreenAnalysisResponse> {
     if (!ocrResult.textFound || ocrResult.text.trim().length === 0) {
       return {
@@ -812,10 +818,15 @@ function App() {
       commandId: command.id,
       intent: command.intent,
       text: ocrResult.text,
-      context: buildLocalAnalysisContext(command, captured, ocrResult, projectDiagnosis, projectIndex),
+      context: buildLocalAnalysisContext(command, captured, ocrResult, projectDiagnosis, projectIndex, projectIndexDiagnosis),
     });
 
-    return mapLocalAgentAnalysisResponse(command, ocrResult, localResponse);
+    const mapped = mapLocalAgentAnalysisResponse(command, ocrResult, localResponse);
+    if (command.intent === 'screen_error_analysis' && projectIndexDiagnosis) {
+      return buildProjectIndexedScreenAnalysisResponse(command, ocrResult, mapped, projectIndexDiagnosis);
+    }
+
+    return mapped;
   }
 
   async function refreshProjectManifest(projectContext: SelectedProject): Promise<{ registration: ManifestRegisterResponse; scan: ProjectScanResult }> {
@@ -997,6 +1008,43 @@ function buildLocalAssistantSetupMessage(appReady: boolean, ocrReady: boolean, l
 
 function getDefaultLocalAssistantSetupMessage(): string {
   return 'Local Assistant is not ready. Start the local services, then retry.';
+}
+
+function buildProjectIndexedScreenAnalysisResponse(
+  command: CommandInput,
+  ocrResult: ScreenOcrResponse,
+  localAgentAnalysis: ScreenAnalysisResponse,
+  diagnosis: ScreenProjectIndexDiagnosis,
+): ScreenAnalysisResponse {
+  const auxiliaryText = getKoreanAnalysisText(localAgentAnalysis.detail ?? '') || getKoreanAnalysisText(localAgentAnalysis.summary);
+  const summary = buildScreenProjectIndexSummary(diagnosis);
+  const detail = buildScreenProjectIndexDetail(diagnosis, auxiliaryText);
+  return {
+    ...localAgentAnalysis,
+    requestId: command.id,
+    title: '화면 오류 프로젝트 흐름 진단',
+    summary,
+    detail,
+    preview: summarizePreview(summary, detail),
+    actionItems: mergeActionItems(buildScreenProjectIndexActionItems(diagnosis), localAgentAnalysis.actionItems),
+    textUsedLength: ocrResult.textLength,
+  };
+}
+
+function mergeRelatedProjectFiles(
+  primary: RelatedProjectFileCandidate[],
+  secondary: RelatedProjectFileCandidate[],
+): RelatedProjectFileCandidate[] {
+  const merged = new Map<string, RelatedProjectFileCandidate>();
+  for (const file of [...primary, ...secondary]) {
+    const existing = merged.get(file.relativePath);
+    if (!existing || file.score > existing.score) {
+      merged.set(file.relativePath, file);
+    }
+  }
+  return Array.from(merged.values())
+    .sort((left, right) => right.score - left.score || left.relativePath.localeCompare(right.relativePath))
+    .slice(0, 16);
 }
 
 function buildFailureNextStep(message: string): string {
@@ -1636,6 +1684,7 @@ function buildLocalAnalysisContext(
   ocrResult: ScreenOcrResponse,
   projectDiagnosis: ProjectAwareScreenDiagnosis | null = null,
   projectIndex: ProjectDeepIndexResult | null = null,
+  projectIndexDiagnosis: ScreenProjectIndexDiagnosis | null = null,
 ): string {
   const userRequest = command.text.length > 240 ? `${command.text.slice(0, 237)}...` : command.text;
   const baseContext = [
@@ -1649,7 +1698,9 @@ function buildLocalAnalysisContext(
     baseContext.push(formatProjectDiagnosisContext(projectDiagnosis));
   }
 
-  if (projectIndex) {
+  if (projectIndexDiagnosis) {
+    baseContext.push(formatScreenProjectIndexContext(projectIndexDiagnosis));
+  } else if (projectIndex) {
     baseContext.push(buildProjectDeepIndexScreenContext(projectIndex));
   }
 
