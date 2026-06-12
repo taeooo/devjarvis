@@ -1,9 +1,8 @@
-import type { CommandInput, LocalAgentConnectionState } from '../types/jarvisCommand';
+import type { LocalAgentConnectionState } from '../types/jarvisCommand';
 
 type JarvisCoreProps = {
   assistantState: LocalAgentConnectionState;
   isProcessing: boolean;
-  lastCommand: CommandInput | null;
   systemMessage: string | null;
   errorMessage: string | null;
   commandPhaseLabel: string;
@@ -12,12 +11,12 @@ type JarvisCoreProps = {
 export function JarvisCore({
   assistantState,
   isProcessing,
-  lastCommand,
   systemMessage,
   errorMessage,
   commandPhaseLabel,
 }: JarvisCoreProps) {
   const coreLabel = resolveCoreLabel(assistantState, isProcessing, Boolean(errorMessage), commandPhaseLabel);
+  const helperMessage = errorMessage ?? systemMessage;
 
   return (
     <section className="jarvis-core-panel" aria-label="Jarvis command core">
@@ -40,15 +39,10 @@ export function JarvisCore({
               <span key={index} style={{ animationDelay: `${index * 70}ms` }} />
             ))}
           </div>
+          {helperMessage && (
+            <p className={errorMessage ? 'core-helper core-helper-error' : 'core-helper'}>{helperMessage}</p>
+          )}
         </div>
-      </div>
-
-      <div className="command-readout" aria-live="polite">
-        <span>Last Command</span>
-        <strong>{lastCommand?.text || 'Waiting for text command'}</strong>
-        {(systemMessage || errorMessage) && (
-          <p className={errorMessage ? 'readout-error' : 'readout-message'}>{errorMessage ?? systemMessage}</p>
-        )}
       </div>
     </section>
   );

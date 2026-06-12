@@ -25,23 +25,18 @@ public class ProjectService {
         String normalizedRootPathAlias = normalizeBlankToNull(request.rootPathAlias());
 
         if (normalizedRootPathAlias != null) {
-            Project existing = projectRepository
-                    .findFirstByRootPathAliasAndStatus(normalizedRootPathAlias, ProjectStatus.ACTIVE)
-                    .orElse(null);
-            if (existing != null) {
-                return ProjectResponse.from(existing);
+            var existingByAlias = projectRepository.findFirstByRootPathAliasAndStatus(
+                    normalizedRootPathAlias,
+                    ProjectStatus.ACTIVE
+            );
+            if (existingByAlias.isPresent()) {
+                return ProjectResponse.from(existingByAlias.get());
             }
         }
 
-        Project existingByName = projectRepository
-                .findFirstByNameIgnoreCaseAndStatus(normalizedName, ProjectStatus.ACTIVE)
-                .orElse(null);
-        if (existingByName != null) {
-            return ProjectResponse.from(existingByName);
-        }
-
-        if (projectRepository.existsByNameIgnoreCase(normalizedName)) {
-            throw new IllegalArgumentException("PROJECT_NAME_CONFLICT");
+        var existingByName = projectRepository.findFirstByNameIgnoreCaseAndStatus(normalizedName, ProjectStatus.ACTIVE);
+        if (existingByName.isPresent()) {
+            return ProjectResponse.from(existingByName.get());
         }
 
         Project project = Project.create(

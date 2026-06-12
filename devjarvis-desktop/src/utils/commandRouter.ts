@@ -7,6 +7,10 @@ import type {
   ScreenTargetPolicy,
 } from '../types/jarvisCommand';
 
+export type CommandRoutingHint = {
+  hasSelectedProject?: boolean;
+};
+
 export type CommandExecutionPlan = {
   command: CommandInput;
   needsScreenCapture: boolean;
@@ -19,16 +23,16 @@ export type CommandExecutionPlan = {
   screenTargetPolicy: ScreenTargetPolicy;
 };
 
-export function createCommandInput(text: string, source: CommandSource): CommandInput {
+export function createCommandInput(text: string, source: CommandSource, hint: CommandRoutingHint = {}): CommandInput {
   const normalized = text.trim();
-  const intent = inferCommandIntent(normalized);
+  const intent = inferCommandIntent(normalized, hint);
 
   return {
     id: createClientId(),
     source,
     text: normalized,
     createdAt: new Date().toISOString(),
-    contextMode: inferContextMode(normalized, intent),
+    contextMode: inferContextMode(normalized, intent, hint),
     intent,
   };
 }
@@ -50,7 +54,6 @@ export function createCommandPlan(command: CommandInput): CommandExecutionPlan {
     screenTargetPolicy: resolveScreenTargetPolicy(command),
   };
 }
-
 
 export function resolveScreenTargetPolicy(command: CommandInput): ScreenTargetPolicy {
   const needsScreen = command.contextMode === 'screen' || command.contextMode === 'auto';
@@ -76,80 +79,46 @@ export function formatScreenTargetPolicy(policy: ScreenTargetPolicy): string {
   }
 }
 
-export function inferContextMode(text: string, intent: CommandIntent = inferCommandIntent(text)): ContextMode {
-  const normalized = normalize(text);
-  const inlineMathMatched = hasInlineArithmeticExpression(normalized);
-  const screenMatched = hasScreenReference(normalized);
-  const projectMatched = hasProjectReference(normalized);
+export function inferContextMode(
+  text: string,
+  intent: CommandIntent = inferCommandIntent(text),
+  hint: CommandRoutingHint = {},
+): ContextMode {
+  const token = getCommandToken(text);
+  const inlineMathMatched = hasInlineArithmeticExpression(text);
+
+  if (token === '/screen') return 'screen';
+  if (token === '/project') return 'project';
+  if (token === '/log') return 'project';
+  if (token === '/chat') return 'general';
+  if (token === '/math') return inlineMathMatched ? 'general' : 'screen';
+  if (token === '/translate' || token === '/summary') return 'screen';
 
   if (intent === 'screen_math_solver') {
-    if (projectMatched && !screenMatched && !inlineMathMatched) {
-      return 'project';
-    }
-
-    return screenMatched || !inlineMathMatched ? 'screen' : 'general';
+    return inlineMathMatched ? 'general' : 'screen';
   }
 
-  if (intent === 'screen_error_analysis') {
-    return projectMatched ? 'auto' : 'screen';
-  }
-
-  if (intent === 'project_diagnosis' || intent === 'log_analysis') {
-    return screenMatched ? 'auto' : 'project';
-  }
-
-  if (screenMatched && projectMatched) {
-    return 'auto';
-  }
-
-  if (screenMatched) {
-    return 'screen';
-  }
-
-  if (projectMatched) {
+  if (hint.hasSelectedProject) {
     return 'project';
   }
 
   return 'general';
 }
 
-export function inferCommandIntent(text: string): CommandIntent {
-  const normalized = normalize(text);
-  const screenMatched = hasScreenReference(normalized);
-  const projectMatched = hasProjectReference(normalized);
-  const inlineMathMatched = hasInlineArithmeticExpression(normalized);
+export function inferCommandIntent(text: string, hint: CommandRoutingHint = {}): CommandIntent {
+  const token = getCommandToken(text);
+  const inlineMathMatched = hasInlineArithmeticExpression(text);
 
-  if (screenMatched && hasMathIntent(normalized)) {
-    return 'screen_math_solver';
-  }
+  if (token === '/translate') return 'screen_translate';
+  if (token === '/summary') return 'screen_summary';
+  if (token === '/project') return 'project_diagnosis';
+  if (token === '/log') return 'log_analysis';
+  if (token === '/chat') return 'general_chat';
+  if (token === '/math') return 'screen_math_solver';
+  if (token === '/screen') return inlineMathMatched ? 'screen_math_solver' : 'screen_error_analysis';
 
-  if (projectMatched && hasProjectDiagnosisIntent(normalized) && !screenMatched) {
-    return 'project_diagnosis';
-  }
-
-  if (hasMathIntent(normalized) && (screenMatched || inlineMathMatched || !projectMatched)) {
-    return 'screen_math_solver';
-  }
-
-  if (screenMatched && hasAny(normalized, ['번역', 'translate', 'translation'])) {
-    return 'screen_translate';
-  }
-
-  if (screenMatched && hasAny(normalized, ['요약', '정리', 'summary', 'summarize'])) {
-    return 'screen_summary';
-  }
-
-  if (screenMatched && hasAny(normalized, ['에러', '오류', '왜', '원인', '문제', 'error', 'exception', 'failed'])) {
-    return 'screen_error_analysis';
-  }
-
-  if (hasAny(normalized, ['로그', 'log'])) {
-    return 'log_analysis';
-  }
-
-  if (projectMatched) {
-    return 'project_diagnosis';
-  }
+  if (inlineMathMatched) return 'screen_math_solver';
+  if (hint.hasSelectedProject) return 'project_diagnosis';
 
   return 'general_chat';
 }
@@ -250,7 +219,7 @@ function resolveNextStep(intent: CommandIntent, contextMode: ContextMode): strin
   }
 
   if (intent === 'project_diagnosis') {
-    return 'Review project structure notes in detail view';
+    return 'Review project file candidates in detail view';
   }
 
   if (intent === 'log_analysis') {
@@ -260,87 +229,13 @@ function resolveNextStep(intent: CommandIntent, contextMode: ContextMode): strin
   return 'Review the response';
 }
 
-function normalize(text: string): string {
-  return text.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-function hasAny(text: string, tokens: string[]): boolean {
-  return tokens.some((token) => text.includes(token));
-}
-
-function hasScreenReference(text: string): boolean {
-  return hasAny(text, [
-    '화면',
-    '스크린',
-    '캡처',
-    '캡쳐',
-    '이미지',
-    'window',
-    'screen',
-  ]);
-}
-
-function hasProjectReference(text: string): boolean {
-  return hasAny(text, [
-    '프로젝트',
-    '소스',
-    '코드',
-    '파일',
-    '폴더',
-    '구조',
-    '빌드',
-    '컴파일',
-    '에러',
-    '오류',
-    '로그',
-    '원인',
-    '스택트레이스',
-    'stack',
-    'trace',
-    'repository',
-    'repo',
-  ]);
-}
-
-function hasProjectDiagnosisIntent(text: string): boolean {
-  return hasAny(text, [
-    '분석',
-    '진단',
-    '확인',
-    '파악',
-    '봐줘',
-    '알려줘',
-    '구조',
-    '왜',
-    '원인',
-    'analysis',
-    'diagnose',
-    'review',
-  ]);
-}
-
-function hasMathIntent(text: string): boolean {
-  return hasAny(text, [
-    '계산',
-    '수계산',
-    '산수',
-    '수식',
-    '빈칸',
-    '답',
-    '풀어',
-    'solve',
-    'calculate',
-    'arithmetic',
-    'math',
-    '곱하기',
-    '곱셈',
-    '나누기',
-    '나눗셈',
-    '몫',
-    '나머지',
-    'remainder',
-    'quotient',
-  ]);
+function getCommandToken(text: string): string | null {
+  const trimmed = text.trim().toLowerCase();
+  const first = trimmed.split(/\s+/, 1)[0] ?? '';
+  if (['/screen', '/project', '/math', '/translate', '/summary', '/log', '/chat'].includes(first)) {
+    return first;
+  }
+  return null;
 }
 
 function hasInlineArithmeticExpression(text: string): boolean {

@@ -10,6 +10,9 @@ use walkdir::{DirEntry, WalkDir};
 
 const MAX_MANIFEST_FILES: usize = 10_000;
 const MAX_INDEXABLE_FILE_BYTES: u64 = 5 * 1024 * 1024;
+const MAX_APPROVED_FILE_COUNT: usize = 8;
+const MAX_APPROVED_FILE_BYTES: u64 = 32 * 1024;
+const MAX_APPROVED_TOTAL_BYTES: u64 = 160 * 1024;
 const MAIN_WINDOW_LABEL: &str = "main";
 
 #[derive(Debug, Serialize)]
@@ -43,6 +46,35 @@ struct ProjectScanResult {
     root_path_alias: String,
     files: Vec<ManifestFile>,
     summary: ScanSummary,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectFileReadItem {
+    relative_path: String,
+    file_name: String,
+    extension: String,
+    language: String,
+    size_bytes: u64,
+    truncated: bool,
+    content: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectFileReadRejectedItem {
+    relative_path: String,
+    reason: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectFileReadResult {
+    files: Vec<ProjectFileReadItem>,
+    rejected: Vec<ProjectFileReadRejectedItem>,
+    total_bytes: u64,
+    max_file_bytes: u64,
+    max_total_bytes: u64,
 }
 
 #[tauri::command]
@@ -93,6 +125,129 @@ fn scan_project_manifest(root_path: String) -> Result<ProjectScanResult, String>
         root_path_alias: format!("LOCAL_PROJECT::{}", sanitize_alias(&root_name)),
         files,
         summary,
+    })
+}
+
+
+#[tauri::command]
+fn read_project_file_selection(root_path: String, relative_paths: Vec<String>) -> Result<ProjectFileReadResult, String> {
+    let root = fs::canonicalize(PathBuf::from(root_path))
+        .map_err(|_| "프로젝트 폴더를 확인할 수 없습니다.".to_string())?;
+
+    if !root.is_dir() {
+        return Err("프로젝트 폴더만 사용할 수 있습니다.".to_string());
+    }
+
+    let mut files = Vec::new();
+    let mut rejected = Vec::new();
+    let mut total_bytes = 0_u64;
+
+    for relative_path in relative_paths.into_iter().take(MAX_APPROVED_FILE_COUNT) {
+        if !is_safe_relative_path(&relative_path) {
+            rejected.push(ProjectFileReadRejectedItem {
+                relative_path,
+                reason: "UNSAFE_RELATIVE_PATH".to_string(),
+            });
+            continue;
+        }
+
+        let path = root.join(&relative_path);
+        let Ok(link_metadata) = fs::symlink_metadata(&path) else {
+            rejected.push(ProjectFileReadRejectedItem {
+                relative_path,
+                reason: "NOT_FOUND".to_string(),
+            });
+            continue;
+        };
+
+        if link_metadata.file_type().is_symlink() {
+            rejected.push(ProjectFileReadRejectedItem {
+                relative_path,
+                reason: "SYMLINK".to_string(),
+            });
+            continue;
+        }
+
+        let Ok(canonical_path) = fs::canonicalize(&path) else {
+            rejected.push(ProjectFileReadRejectedItem {
+                relative_path,
+                reason: "NOT_FOUND".to_string(),
+            });
+            continue;
+        };
+
+        if !canonical_path.starts_with(&root) || !canonical_path.is_file() {
+            rejected.push(ProjectFileReadRejectedItem {
+                relative_path,
+                reason: "OUT_OF_SCOPE".to_string(),
+            });
+            continue;
+        }
+
+        let Ok(metadata) = fs::metadata(&canonical_path) else {
+            rejected.push(ProjectFileReadRejectedItem {
+                relative_path,
+                reason: "METADATA_UNAVAILABLE".to_string(),
+            });
+            continue;
+        };
+
+        let size_bytes = metadata.len();
+        let file_name = canonical_path
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let extension = canonical_path
+            .extension()
+            .map(|value| value.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+
+        if detect_excluded_reason(&relative_path, &file_name, &extension, size_bytes, false).is_some() {
+            rejected.push(ProjectFileReadRejectedItem {
+                relative_path,
+                reason: "EXCLUDED_BY_POLICY".to_string(),
+            });
+            continue;
+        }
+
+        if total_bytes >= MAX_APPROVED_TOTAL_BYTES {
+            rejected.push(ProjectFileReadRejectedItem {
+                relative_path,
+                reason: "TOTAL_BUDGET_EXCEEDED".to_string(),
+            });
+            continue;
+        }
+
+        let remaining_budget = MAX_APPROVED_TOTAL_BYTES.saturating_sub(total_bytes);
+        let read_limit = MAX_APPROVED_FILE_BYTES.min(remaining_budget);
+        let mut file = File::open(&canonical_path).map_err(|_| "선택 파일을 열 수 없습니다.".to_string())?;
+        let mut buffer = vec![0_u8; read_limit as usize];
+        let read = file.read(&mut buffer).map_err(|_| "선택 파일을 읽을 수 없습니다.".to_string())?;
+        buffer.truncate(read);
+        total_bytes += read as u64;
+
+        let content = String::from_utf8_lossy(&buffer).to_string();
+        let redacted = redact_sensitive_lines(&content);
+        let truncated = size_bytes > read as u64;
+        let language = detect_language(&extension, &file_name);
+
+        files.push(ProjectFileReadItem {
+            relative_path,
+            file_name,
+            extension,
+            language,
+            size_bytes,
+            truncated,
+            content: redacted,
+        });
+    }
+
+    Ok(ProjectFileReadResult {
+        files,
+        rejected,
+        total_bytes,
+        max_file_bytes: MAX_APPROVED_FILE_BYTES,
+        max_total_bytes: MAX_APPROVED_TOTAL_BYTES,
     })
 }
 
@@ -345,6 +500,40 @@ fn calculate_sha256(path: &Path) -> io::Result<String> {
     Ok(digest.iter().map(|byte| format!("{:02x}", byte)).collect())
 }
 
+
+fn redact_sensitive_lines(content: &str) -> String {
+    content
+        .lines()
+        .map(|line| {
+            if is_sensitive_line(line) {
+                "[REDACTED]".to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn is_sensitive_line(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    [
+        "secret",
+        "password",
+        "passwd",
+        "token",
+        "api_key",
+        "apikey",
+        "access_key",
+        "private_key",
+        "client_secret",
+        "authorization",
+        "bearer ",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
 fn summarize(files: &[ManifestFile]) -> ScanSummary {
     let mut summary = ScanSummary {
         requested_file_count: files.len(),
@@ -492,6 +681,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             scan_project_manifest,
+            read_project_file_selection,
             show_main_window,
             hide_main_window
         ])

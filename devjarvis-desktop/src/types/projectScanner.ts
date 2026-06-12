@@ -51,3 +51,26 @@ export type ManifestRegisterResponse = {
   targetFileCount: number;
   excludedFileCount: number;
 };
+
+export type ProjectFileReadItem = {
+  relativePath: string;
+  fileName: string;
+  extension: string;
+  language: string;
+  sizeBytes: number;
+  truncated: boolean;
+  content: string;
+};
+
+export type ProjectFileReadRejectedItem = {
+  relativePath: string;
+  reason: string;
+};
+
+export type ProjectFileReadResult = {
+  files: ProjectFileReadItem[];
+  rejected: ProjectFileReadRejectedItem[];
+  totalBytes: number;
+  maxFileBytes: number;
+  maxTotalBytes: number;
+};

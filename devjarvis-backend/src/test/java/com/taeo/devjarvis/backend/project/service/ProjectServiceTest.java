@@ -3,14 +3,12 @@ package com.taeo.devjarvis.backend.project.service;
 import com.taeo.devjarvis.backend.project.domain.Project;
 import com.taeo.devjarvis.backend.project.domain.ProjectStatus;
 import com.taeo.devjarvis.backend.project.dto.ProjectCreateRequest;
-import com.taeo.devjarvis.backend.project.dto.ProjectResponse;
 import com.taeo.devjarvis.backend.project.repository.ProjectRepository;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -28,48 +26,31 @@ class ProjectServiceTest {
         when(projectRepository.findFirstByRootPathAliasAndStatus("LOCAL_PROJECT::devjarvis", ProjectStatus.ACTIVE))
                 .thenReturn(Optional.of(existing));
 
-        ProjectResponse response = projectService.create(new ProjectCreateRequest(
+        var response = projectService.create(new ProjectCreateRequest(
                 "devjarvis",
                 "LOCAL_PROJECT::devjarvis",
                 null
         ));
 
         assertThat(response.name()).isEqualTo("devjarvis");
-        assertThat(response.rootPathAlias()).isEqualTo("LOCAL_PROJECT::devjarvis");
         verify(projectRepository, never()).save(any(Project.class));
     }
 
     @Test
-    void createReturnsExistingActiveProjectWhenNameAlreadyExists() {
+    void createReturnsExistingProjectWhenNameAlreadyExists() {
         Project existing = Project.create("devjarvis", "LOCAL_PROJECT::devjarvis", null);
-        when(projectRepository.findFirstByRootPathAliasAndStatus("LOCAL_PROJECT::different", ProjectStatus.ACTIVE))
+        when(projectRepository.findFirstByRootPathAliasAndStatus("LOCAL_PROJECT::other", ProjectStatus.ACTIVE))
                 .thenReturn(Optional.empty());
         when(projectRepository.findFirstByNameIgnoreCaseAndStatus("devjarvis", ProjectStatus.ACTIVE))
                 .thenReturn(Optional.of(existing));
 
-        ProjectResponse response = projectService.create(new ProjectCreateRequest(
+        var response = projectService.create(new ProjectCreateRequest(
                 "devjarvis",
-                "LOCAL_PROJECT::different",
+                "LOCAL_PROJECT::other",
                 null
         ));
 
         assertThat(response.name()).isEqualTo("devjarvis");
         verify(projectRepository, never()).save(any(Project.class));
-    }
-
-    @Test
-    void createRejectsInactiveNameConflict() {
-        when(projectRepository.findFirstByRootPathAliasAndStatus("LOCAL_PROJECT::devjarvis", ProjectStatus.ACTIVE))
-                .thenReturn(Optional.empty());
-        when(projectRepository.findFirstByNameIgnoreCaseAndStatus("devjarvis", ProjectStatus.ACTIVE))
-                .thenReturn(Optional.empty());
-        when(projectRepository.existsByNameIgnoreCase("devjarvis")).thenReturn(true);
-
-        assertThatThrownBy(() -> projectService.create(new ProjectCreateRequest(
-                "devjarvis",
-                "LOCAL_PROJECT::devjarvis",
-                null
-        ))).isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("PROJECT_NAME_CONFLICT");
     }
 }

@@ -25,7 +25,7 @@ export function CommandInput({ disabled = false, onSubmit }: CommandInputProps) 
       <input
         value={text}
         onChange={(event) => setText(event.target.value)}
-        placeholder="예: 이 화면 왜 그런거야? / 이 에러 원인 분석해줘"
+        placeholder="/project, /screen, /math, /translate, /summary, /log, /chat"
         disabled={disabled}
         autoComplete="off"
       />

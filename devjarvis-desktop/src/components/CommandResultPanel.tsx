@@ -3,27 +3,22 @@ import { createPortal } from 'react-dom';
 import type { CommandResult } from '../types/jarvisCommand';
 
 const MAX_RENDERED_HISTORY = 2;
+const DEFAULT_APPROVED_FILE_LIMIT = 4;
 
 type CommandResultPanelProps = {
   results: CommandResult[];
+  onAnalyzeProjectFiles?: (relativePaths: string[]) => void | Promise<void>;
 };
 
-type DisplayResult = {
-  title: string;
-  summary: string;
-  detail: string | null;
-  actionItems: string[];
-};
-
-export function CommandResultPanel({ results }: CommandResultPanelProps) {
+export function CommandResultPanel({ results, onAnalyzeProjectFiles }: CommandResultPanelProps) {
   const [selectedResult, setSelectedResult] = useState<CommandResult | null>(null);
-  const [currentResult, ...historyResults] = results;
+  const [currentResult, ...history결과] = results;
 
   return (
     <aside className="result-panel" aria-label="Command results">
       <div className="panel-heading">
-        <span>RESULTS</span>
-        <strong>{results.length > 0 ? 'READY' : 'IDLE'}</strong>
+        <span>결과</span>
+        <strong>{results.length > 0 ? '준비됨' : '대기'}</strong>
       </div>
 
       <div className="result-list">
@@ -31,14 +26,14 @@ export function CommandResultPanel({ results }: CommandResultPanelProps) {
           <div className="empty-result">명령 대기 중</div>
         ) : (
           <>
-            <section className="result-group" aria-label="Current command result">
-              <span className="result-group-label">CURRENT</span>
+            <section className="result-group" aria-label="현재 command result">
+              <span className="result-group-label">현재</span>
               <ResultCard result={currentResult} onOpen={() => setSelectedResult(currentResult)} />
             </section>
-            {historyResults.length > 0 && (
+            {history결과.length > 0 && (
               <section className="result-group" aria-label="Previous command results">
-                <span className="result-group-label">HISTORY</span>
-                {historyResults.slice(0, MAX_RENDERED_HISTORY).map((result) => (
+                <span className="result-group-label">히스토리</span>
+                {history결과.slice(0, MAX_RENDERED_HISTORY).map((result) => (
                   <ResultCard key={result.id} result={result} compact onOpen={() => setSelectedResult(result)} />
                 ))}
               </section>
@@ -47,7 +42,14 @@ export function CommandResultPanel({ results }: CommandResultPanelProps) {
         )}
       </div>
 
-      {selectedResult && <ResultDetailDialog result={selectedResult} onClose={() => setSelectedResult(null)} />}
+      {selectedResult && createPortal(
+        <ResultDetailDialog
+          result={selectedResult}
+          onClose={() => setSelectedResult(null)}
+          onAnalyzeProjectFiles={onAnalyzeProjectFiles}
+        />,
+        document.body,
+      )}
     </aside>
   );
 }
@@ -59,31 +61,32 @@ type ResultCardProps = {
 };
 
 function ResultCard({ result, compact = false, onOpen }: ResultCardProps) {
-  const display = useMemo(() => buildDisplayResult(result), [result]);
   const relatedFiles = result.metadata?.relatedProjectFiles ?? [];
 
   return (
     <article className={`result-card result-${result.status} ${compact ? 'result-card-compact' : ''}`}>
       <div className="result-card-topline">
         <span>{formatResultStatus(result.status)}</span>
-        <div className="result-card-topline-actions">
-          <time dateTime={result.completedAt ?? result.createdAt}>{formatResultTime(result.completedAt ?? result.createdAt)}</time>
-          <button type="button" className="result-detail-button" onClick={onOpen}>
+        <div className="result-card-actions result-card-actions-inline">
+          <time dateTime={result.completedAt ?? result.createdAt}>
+            {formatResultTime(result.completedAt ?? result.createdAt)}
+          </time>
+          <button type="button" onClick={onOpen}>
             전문 보기
           </button>
         </div>
       </div>
-      <strong>{display.title}</strong>
-      <p>{display.summary}</p>
+      <strong>{result.metadata?.analysisTitle ?? result.title}</strong>
+      <p>{result.metadata?.analysisPreview ?? result.summary}</p>
       {!compact && relatedFiles.length > 0 && (
         <div className="related-file-preview">
-          <span>관련 파일 후보</span>
+          <span>후보 파일</span>
           <strong>{relatedFiles.length}</strong>
         </div>
       )}
-      {!compact && display.actionItems.length > 0 && (
+      {!compact && result.metadata?.analysisActionItems && result.metadata.analysisActionItems.length > 0 && (
         <ul className="result-action-list">
-          {display.actionItems.slice(0, 2).map((item) => (
+          {result.metadata.analysisActionItems.slice(0, 2).map((item) => (
             <li key={item}>{item}</li>
           ))}
         </ul>
@@ -96,25 +99,53 @@ function ResultCard({ result, compact = false, onOpen }: ResultCardProps) {
 type ResultDetailDialogProps = {
   result: CommandResult;
   onClose: () => void;
+  onAnalyzeProjectFiles?: (relativePaths: string[]) => void | Promise<void>;
 };
 
-function ResultDetailDialog({ result, onClose }: ResultDetailDialogProps) {
-  const display = useMemo(() => buildDisplayResult(result), [result]);
+function ResultDetailDialog({ result, onClose, onAnalyzeProjectFiles }: ResultDetailDialogProps) {
+  const title = result.metadata?.analysisTitle ?? result.title;
+  const summary = result.metadata?.analysisSummary ?? result.summary;
+  const detail = result.metadata?.analysisDetail ?? result.detail ?? null;
+  const actionItems = result.metadata?.analysisActionItems ?? [];
   const relatedFiles = result.metadata?.relatedProjectFiles ?? [];
   const timestamp = result.completedAt ?? result.createdAt;
+  const [selectedPaths, setSelectedPaths] = useState<string[]>(() => relatedFiles
+    .slice(0, DEFAULT_APPROVED_FILE_LIMIT)
+    .map((file) => file.relativePath));
 
   useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onClose();
-      }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
     }
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
   }, [onClose]);
 
-  return createPortal(
+  const canAnalyzeSelection = Boolean(onAnalyzeProjectFiles) && selectedPaths.length > 0;
+  const selectedSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
+
+  function togglePath(relativePath: string) {
+    setSelectedPaths((current) => {
+      if (current.includes(relativePath)) {
+        return current.filter((item) => item !== relativePath);
+      }
+
+      if (current.length >= 8) {
+        return current;
+      }
+
+      return [...current, relativePath];
+    });
+  }
+
+  function submitSelection() {
+    if (!onAnalyzeProjectFiles || selectedPaths.length === 0) return;
+    void onAnalyzeProjectFiles(selectedPaths);
+    onClose();
+  }
+
+  return (
     <div className="result-detail-overlay" role="presentation" onClick={onClose}>
       <section
         className="result-detail-dialog"
@@ -126,10 +157,10 @@ function ResultDetailDialog({ result, onClose }: ResultDetailDialogProps) {
         <div className="result-detail-header">
           <div>
             <span>{formatResultStatus(result.status)}</span>
-            <h2 id="result-detail-title">{display.title}</h2>
+            <h2 id="result-detail-title">{title}</h2>
             <time dateTime={timestamp}>{formatResultTime(timestamp)}</time>
           </div>
-          <button type="button" aria-label="Close result detail" onClick={onClose}>
+          <button type="button" aria-label="전문 보기 닫기" onClick={onClose}>
             닫기
           </button>
         </div>
@@ -137,152 +168,80 @@ function ResultDetailDialog({ result, onClose }: ResultDetailDialogProps) {
         <div className="result-detail-body">
           <section>
             <h3>요약</h3>
-            <p>{display.summary}</p>
+            <p>{summary}</p>
           </section>
 
-          {display.detail && display.detail.trim().length > 0 && display.detail.trim() !== display.summary.trim() && (
+          {detail && detail.trim().length > 0 && detail.trim() !== summary.trim() && (
             <section>
               <h3>상세</h3>
-              <pre>{formatDetailText(display.detail)}</pre>
+              <pre>{formatDetailText(detail)}</pre>
             </section>
           )}
 
           {relatedFiles.length > 0 && (
             <section>
-              <h3>관련 파일 후보</h3>
-              <div className="related-file-list">
+              <h3>선택 파일 분석</h3>
+              <p className="detail-helper-text">
+                로컬에서 읽을 파일만 선택하세요. 민감 파일은 정책상 차단됩니다.
+              </p>
+              <div className="related-file-list related-file-list-selectable">
                 {relatedFiles.map((file) => (
-                  <div className="related-file-row" key={file.relativePath}>
+                  <label className="related-file-row related-file-row-selectable" key={file.relativePath}>
+                    <input
+                      type="checkbox"
+                      checked={selectedSet.has(file.relativePath)}
+                      onChange={() => togglePath(file.relativePath)}
+                    />
                     <code>{file.relativePath}</code>
-                    <span>{file.language || file.extension || 'file'}</span>
+                    <span>{file.matchReasons.join(', ') || file.language || file.extension || 'file'}</span>
+                  </label>
+                ))}
+              </div>
+              {onAnalyzeProjectFiles && (
+                <div className="detail-action-row">
+                  <button type="button" disabled={!canAnalyzeSelection} onClick={submitSelection}>
+                    선택 파일 로컬 분석
+                  </button>
+                </div>
+              )}
+            </section>
+          )}
+
+          {result.metadata?.projectSelectedFiles && result.metadata.projectSelectedFiles.length > 0 && (
+            <section>
+              <h3>승인된 파일</h3>
+              <div className="related-file-list">
+                {result.metadata.projectSelectedFiles.map((relativePath) => (
+                  <div className="related-file-row" key={relativePath}>
+                    <code>{relativePath}</code>
+                    <span>approved</span>
                   </div>
                 ))}
               </div>
             </section>
           )}
 
-          {display.actionItems.length > 0 && (
+          {actionItems.length > 0 && (
             <section>
               <h3>다음 확인 액션</h3>
               <ul>
-                {display.actionItems.map((item) => (
+                {actionItems.map((item) => (
                   <li key={item}>{item}</li>
                 ))}
               </ul>
             </section>
           )}
+
+          {result.detail && result.detail.trim().length > 0 && result.detail !== detail && (
+            <section>
+              <h3>요청</h3>
+              <pre>{result.detail}</pre>
+            </section>
+          )}
         </div>
       </section>
-    </div>,
-    document.body,
+    </div>
   );
-}
-
-function buildDisplayResult(result: CommandResult): DisplayResult {
-  const parsedSummary = parseJsonLikeText(result.metadata?.analysisSummary ?? result.summary);
-  const parsedDetail = parseJsonLikeText(result.metadata?.analysisDetail ?? result.detail ?? null);
-
-  return {
-    title: localizeTitle(result.metadata?.analysisTitle ?? result.title, result.intent, result.status),
-    summary: extractReadableSummary(parsedSummary) ?? extractReadableSummary(parsedDetail) ?? localizeSummary(result.summary),
-    detail: extractReadableDetail(parsedDetail) ?? extractReadableDetail(parsedSummary) ?? null,
-    actionItems: result.metadata?.analysisActionItems?.length
-      ? result.metadata.analysisActionItems
-      : extractActionItems(parsedSummary) ?? extractActionItems(parsedDetail) ?? [],
-  };
-}
-
-function parseJsonLikeText(value: string | null | undefined): unknown {
-  if (!value || !value.trim()) return null;
-  const normalized = value.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim();
-  if (!normalized.startsWith('{') && !normalized.startsWith('[')) return value;
-
-  try {
-    return JSON.parse(normalized);
-  } catch {
-    return value;
-  }
-}
-
-function extractReadableSummary(value: unknown): string | null {
-  if (typeof value === 'string') return value.trim() || null;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  const candidates = [record.summary, record.overview, record.architecture, record.message];
-  for (const candidate of candidates) {
-    const text = stringifyReadable(candidate);
-    if (text) return text;
-  }
-  return null;
-}
-
-function extractReadableDetail(value: unknown): string | null {
-  if (typeof value === 'string') return value.trim() || null;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-
-  const record = value as Record<string, unknown>;
-  const sections = [
-    ['구조', record.architecture],
-    ['모듈 경계', record.module_boundaries ?? record.moduleBoundaries],
-    ['관찰 근거', record.evidence],
-    ['위험 요소', record.risks],
-    ['다음 확인', record.actionItems ?? record.nextActions],
-  ]
-    .map(([label, content]) => formatSection(label as string, content))
-    .filter((section): section is string => Boolean(section));
-
-  return sections.length > 0 ? sections.join('\n\n') : null;
-}
-
-function extractActionItems(value: unknown): string[] | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  const raw = record.actionItems ?? record.nextActions;
-  if (!Array.isArray(raw)) return null;
-  const items = raw.map((item) => stringifyReadable(item)).filter((item): item is string => Boolean(item));
-  return items.length > 0 ? items : null;
-}
-
-function formatSection(label: string, content: unknown): string | null {
-  const text = stringifyReadable(content);
-  return text ? `[${label}]\n${text}` : null;
-}
-
-function stringifyReadable(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value === 'string') return value.trim() || null;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) {
-    const items = value.map((item) => stringifyReadable(item)).filter((item): item is string => Boolean(item));
-    return items.length > 0 ? items.map((item) => `- ${item}`).join('\n') : null;
-  }
-  if (typeof value === 'object') {
-    return Object.entries(value as Record<string, unknown>)
-      .map(([key, item]) => {
-        const text = stringifyReadable(item);
-        return text ? `${key}: ${text}` : null;
-      })
-      .filter((item): item is string => Boolean(item))
-      .join('\n') || null;
-  }
-  return null;
-}
-
-function localizeTitle(title: string, intent: CommandResult['intent'], status: CommandResult['status']): string {
-  if (status === 'failed') return '명령 실패';
-  if (intent === 'project_diagnosis') return '프로젝트 분석 완료';
-  if (intent === 'screen_math_solver') return '계산 완료';
-  if (intent === 'screen_translate') return '번역 완료';
-  if (intent === 'screen_summary') return '요약 완료';
-  if (intent === 'screen_error_analysis') return '화면 진단 완료';
-  if (intent === 'log_analysis') return '로그 분석 완료';
-  if (title === 'Command processing') return '명령 처리 중';
-  return title;
-}
-
-function localizeSummary(summary: string): string {
-  if (summary === 'Command failed') return '명령 처리에 실패했습니다.';
-  return summary;
 }
 
 function formatDetailText(detail: string): string {

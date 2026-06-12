@@ -11,9 +11,9 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
 
     boolean existsByNameIgnoreCase(String name);
 
-    Optional<Project> findFirstByRootPathAliasAndStatus(String rootPathAlias, ProjectStatus status);
-
     Optional<Project> findFirstByNameIgnoreCaseAndStatus(String name, ProjectStatus status);
+
+    Optional<Project> findFirstByRootPathAliasAndStatus(String rootPathAlias, ProjectStatus status);
 
     List<Project> findAllByStatusOrderByCreatedAtDesc(ProjectStatus status);
 }
