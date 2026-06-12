@@ -467,18 +467,24 @@ function App() {
         context,
       });
       const analysis = mapLocalAgentAnalysisResponse(command, { textLength: text.length } as ScreenOcrResponse, response);
+      const summary = buildApprovedFileAnalysisSummary(readResult);
+      const detail = buildApprovedFileAnalysisDetail(readResult, response);
+      const actionItems = mergeActionItems(
+        buildApprovedFileAnalysisActionItems(readResult),
+        analysis.actionItems,
+      );
       const completedResult: CommandResult = {
         ...startedResult,
-        title: '프로젝트 파일 분석 ready',
-        summary: analysis.summary,
+        title: '선택 파일 로컬 분석 완료',
+        summary,
         detail: '/project-files',
-        nextStep: '전문 보기에서 승인 파일 분석 결과를 확인하세요',
+        nextStep: '전문 보기에서 선택 파일 분석 결과를 확인하세요',
         metadata: {
-          analysisTitle: analysis.title,
-          analysisSummary: analysis.summary,
-          analysisDetail: analysis.detail,
-          analysisPreview: analysis.preview,
-          analysisActionItems: analysis.actionItems,
+          analysisTitle: '선택 파일 로컬 분석',
+          analysisSummary: summary,
+          analysisDetail: detail,
+          analysisPreview: summarizePreview(summary, detail),
+          analysisActionItems: actionItems,
           analysisSource: 'local_agent',
           projectFileReadMode: 'approved_selection',
           projectSelectedFiles: readResult.files.map((file) => file.relativePath),
@@ -1425,6 +1431,199 @@ function buildApprovedFileAnalysisText(readResult: ProjectFileReadResult): strin
   ].join('\n'));
 
   return sections.join('\n\n').slice(0, 11000);
+}
+
+
+function buildApprovedFileAnalysisSummary(readResult: ProjectFileReadResult): string {
+  const fileNames = readResult.files.slice(0, 3).map((file) => file.relativePath).join(', ');
+  const suffix = readResult.files.length > 3 ? ` 외 ${readResult.files.length - 3}개` : '';
+  return `승인한 ${readResult.files.length}개 파일을 로컬에서 읽고 민감 라인 제거 후 분석했습니다. 확인 범위는 ${fileNames}${suffix}입니다.`;
+}
+
+function buildApprovedFileAnalysisDetail(
+  readResult: ProjectFileReadResult,
+  response: LocalLlmAnalyzeResponse,
+): string {
+  const localAgentSections = formatLocalAgentStructuredAnalysis(response);
+  const lines = [
+    '[분석 범위]',
+    `- 승인 파일: ${readResult.files.length}개`,
+    `- 차단 파일: ${readResult.rejected.length}개`,
+    `- 읽은 용량: ${formatByteCount(readResult.totalBytes)} / ${formatByteCount(readResult.maxTotalBytes)}`,
+    '',
+    '[승인된 상대경로]',
+    ...readResult.files.map((file) => `- ${file.relativePath}${file.truncated ? ' (일부만 읽음)' : ''}`),
+  ];
+
+  if (readResult.rejected.length > 0) {
+    lines.push(
+      '',
+      '[정책상 차단된 파일]',
+      ...readResult.rejected.map((file) => `- ${file.relativePath}: ${file.reason}`),
+    );
+  }
+
+  lines.push(
+    '',
+    '[Local Agent 분석]',
+    ...(localAgentSections.length > 0 ? localAgentSections : ['- 분석 결과가 충분하지 않습니다. 관련 파일을 더 포함해 다시 확인하세요.']),
+    '',
+    '[보안 경계]',
+    '- 파일은 이 PC에서만 읽었습니다.',
+    '- 민감 라인은 Local Agent 전달 전에 제거했습니다.',
+    '- NAS/Backend/AI Server로 파일 원문을 보내지 않았습니다.',
+  );
+
+  return lines.join('\n');
+}
+
+function buildApprovedFileAnalysisActionItems(readResult: ProjectFileReadResult): string[] {
+  const items = ['에러 화면의 endpoint, 컴포넌트, 클래스명과 승인 파일 분석 결과를 비교하세요.'];
+  if (readResult.rejected.length > 0) {
+    items.push('차단된 파일이 필요해 보이면 민감 파일 여부를 먼저 로컬에서 직접 확인하세요.');
+  }
+  return items;
+}
+
+function mergeActionItems(...groups: Array<string[] | null | undefined>): string[] {
+  const merged: string[] = [];
+  for (const group of groups) {
+    for (const item of group ?? []) {
+      const normalized = formatUserFacingAnalysisText(item).trim();
+      if (normalized && !merged.includes(normalized)) {
+        merged.push(normalized);
+      }
+    }
+  }
+  return merged.slice(0, 5);
+}
+
+function formatLocalAgentStructuredAnalysis(response: LocalLlmAnalyzeResponse): string[] {
+  const candidates = [response.summary, response.detail ?? ''];
+  const lines: string[] = [];
+
+  for (const value of candidates) {
+    const formatted = formatUserFacingAnalysisText(value).trim();
+    if (!formatted || lines.includes(formatted)) continue;
+    lines.push(...formatted.split(/\r?\n/).filter(Boolean));
+  }
+
+  return lines;
+}
+
+function formatUserFacingAnalysisText(value: string): string {
+  const normalized = stripMarkdownJsonFence(value).trim();
+  if (!normalized) return '';
+
+  const parsed = parseJsonObject(normalized);
+  if (parsed !== null) {
+    return formatJsonForUser(parsed);
+  }
+
+  return normalized;
+}
+
+function stripMarkdownJsonFence(value: string): string {
+  return value
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```$/i, '')
+    .trim();
+}
+
+function parseJsonObject(value: string): unknown | null {
+  const trimmed = value.trim();
+  if (!(trimmed.startsWith('{') && trimmed.endsWith('}')) && !(trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function formatJsonForUser(value: unknown, depth = 0): string {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => formatJsonArrayItem(item, depth))
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  if (isRecord(value)) {
+    const sections: string[] = [];
+    for (const [key, entry] of Object.entries(value)) {
+      if (entry === null || entry === undefined || entry === '') continue;
+      const label = formatAnalysisKeyLabel(key);
+      if (Array.isArray(entry)) {
+        const items = entry.map((item) => formatJsonArrayItem(item, depth + 1)).filter(Boolean);
+        if (items.length > 0) sections.push(`[${label}]`, ...items);
+        continue;
+      }
+      if (isRecord(entry)) {
+        const nested = formatJsonForUser(entry, depth + 1);
+        if (nested) sections.push(`[${label}]`, nested);
+        continue;
+      }
+      sections.push(`[${label}]`, `- ${String(entry)}`);
+    }
+    return sections.join('\n');
+  }
+
+  return String(value);
+}
+
+function formatJsonArrayItem(value: unknown, depth: number): string {
+  if (Array.isArray(value)) {
+    const nested = formatJsonForUser(value, depth + 1);
+    return nested ? `- ${nested.replace(/\n/g, '\n  ')}` : '';
+  }
+  if (isRecord(value)) {
+    const pairs = Object.entries(value)
+      .filter(([, entry]) => entry !== null && entry !== undefined && entry !== '')
+      .map(([key, entry]) => `${formatAnalysisKeyLabel(key)}: ${formatJsonScalar(entry)}`);
+    return pairs.length > 0 ? `- ${pairs.join(' / ')}` : '';
+  }
+  return `- ${String(value)}`;
+}
+
+function formatJsonScalar(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((item) => formatJsonScalar(item)).join(', ');
+  }
+  if (isRecord(value)) {
+    return Object.entries(value)
+      .map(([key, entry]) => `${formatAnalysisKeyLabel(key)} ${formatJsonScalar(entry)}`)
+      .join(', ');
+  }
+  return String(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function formatAnalysisKeyLabel(key: string): string {
+  const normalized = key.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
+  switch (normalized) {
+    case 'summary': return '요약';
+    case 'detail': return '상세';
+    case 'action_items': return '다음 확인 액션';
+    case 'runtime_flow': return '실행 흐름';
+    case 'module_boundaries': return '모듈 경계';
+    case 'ui_api_service_links': return 'UI/API/서비스 연결';
+    case 'likely_risk_points': return '잠재 위험 지점';
+    case 'next_checks': return '다음 확인 항목';
+    case 'root_cause_candidates': return '원인 후보';
+    case 'related_files': return '관련 파일';
+    case 'evidence': return '근거';
+    default:
+      return key
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+  }
 }
 
 function incrementCount(counts: Map<string, number>, key: string) {

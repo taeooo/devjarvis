@@ -76,7 +76,7 @@ function ResultCard({ result, compact = false, onOpen }: ResultCardProps) {
         </div>
       </div>
       <strong>{result.metadata?.analysisTitle ?? result.title}</strong>
-      <p>{result.metadata?.analysisPreview ?? result.summary}</p>
+      <p>{formatInlineResultText(result.metadata?.analysisPreview ?? result.summary)}</p>
       {!compact && relatedFiles.length > 0 && (
         <div className="related-file-preview">
           <span>후보 파일</span>
@@ -103,7 +103,7 @@ type ResultDetailDialogProps = {
 
 function ResultDetailDialog({ result, onClose, onAnalyzeProjectFiles }: ResultDetailDialogProps) {
   const title = result.metadata?.analysisTitle ?? result.title;
-  const summary = result.metadata?.analysisSummary ?? result.summary;
+  const summary = formatUserFacingDetailText(result.metadata?.analysisSummary ?? result.summary);
   const detail = result.metadata?.analysisDetail ?? result.detail ?? null;
   const actionItems = result.metadata?.analysisActionItems ?? [];
   const relatedFiles = result.metadata?.relatedProjectFiles ?? [];
@@ -171,7 +171,7 @@ function ResultDetailDialog({ result, onClose, onAnalyzeProjectFiles }: ResultDe
           {detail && detail.trim().length > 0 && detail.trim() !== summary.trim() && (
             <section>
               <h3>상세</h3>
-              <pre>{formatDetailText(detail)}</pre>
+              <pre>{formatUserFacingDetailText(detail)}</pre>
             </section>
           )}
 
@@ -234,7 +234,7 @@ function ResultDetailDialog({ result, onClose, onAnalyzeProjectFiles }: ResultDe
           {result.detail && result.detail.trim().length > 0 && result.detail !== detail && (
             <section>
               <h3>요청</h3>
-              <pre>{result.detail}</pre>
+              <pre>{formatUserFacingDetailText(result.detail)}</pre>
             </section>
           )}
         </div>
@@ -243,11 +243,121 @@ function ResultDetailDialog({ result, onClose, onAnalyzeProjectFiles }: ResultDe
   );
 }
 
-function formatDetailText(detail: string): string {
-  return detail
+function formatInlineResultText(value: string): string {
+  const formatted = formatUserFacingDetailText(value).replace(/\s+/g, ' ').trim();
+  return formatted.length > 220 ? `${formatted.slice(0, 217)}...` : formatted;
+}
+
+function formatUserFacingDetailText(value: string): string {
+  const normalized = stripMarkdownJsonFence(value).trim();
+  if (!normalized) return '';
+
+  const parsed = parseJsonValue(normalized);
+  if (parsed !== null) {
+    return formatJsonValueForUser(parsed);
+  }
+
+  return normalized
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
     .join('\n');
+}
+
+function stripMarkdownJsonFence(value: string): string {
+  return value
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```$/i, '')
+    .trim();
+}
+
+function parseJsonValue(value: string): unknown | null {
+  const trimmed = value.trim();
+  if (!(trimmed.startsWith('{') && trimmed.endsWith('}')) && !(trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function formatJsonValueForUser(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((item) => formatJsonListItem(item)).filter(Boolean).join('\n');
+  }
+
+  if (isRecord(value)) {
+    const lines: string[] = [];
+    for (const [key, entry] of Object.entries(value)) {
+      if (entry === null || entry === undefined || entry === '') continue;
+      const label = formatJsonLabel(key);
+      if (Array.isArray(entry)) {
+        const items = entry.map((item) => formatJsonListItem(item)).filter(Boolean);
+        if (items.length > 0) lines.push(`[${label}]`, ...items);
+        continue;
+      }
+      if (isRecord(entry)) {
+        const nested = formatJsonValueForUser(entry);
+        if (nested) lines.push(`[${label}]`, nested);
+        continue;
+      }
+      lines.push(`[${label}]`, `- ${String(entry)}`);
+    }
+    return lines.join('\n');
+  }
+
+  return String(value);
+}
+
+function formatJsonListItem(value: unknown): string {
+  if (Array.isArray(value)) {
+    const nested = formatJsonValueForUser(value);
+    return nested ? `- ${nested.replace(/\n/g, '\n  ')}` : '';
+  }
+
+  if (isRecord(value)) {
+    const pairs = Object.entries(value)
+      .filter(([, entry]) => entry !== null && entry !== undefined && entry !== '')
+      .map(([key, entry]) => `${formatJsonLabel(key)}: ${formatJsonScalar(entry)}`);
+    return pairs.length > 0 ? `- ${pairs.join(' / ')}` : '';
+  }
+
+  return `- ${String(value)}`;
+}
+
+function formatJsonScalar(value: unknown): string {
+  if (Array.isArray(value)) return value.map((item) => formatJsonScalar(item)).join(', ');
+  if (isRecord(value)) {
+    return Object.entries(value)
+      .map(([key, entry]) => `${formatJsonLabel(key)} ${formatJsonScalar(entry)}`)
+      .join(', ');
+  }
+  return String(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function formatJsonLabel(key: string): string {
+  const normalized = key.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
+  switch (normalized) {
+    case 'summary': return '요약';
+    case 'detail': return '상세';
+    case 'action_items': return '다음 확인 액션';
+    case 'runtime_flow': return '실행 흐름';
+    case 'module_boundaries': return '모듈 경계';
+    case 'ui_api_service_links': return 'UI/API/서비스 연결';
+    case 'likely_risk_points': return '잠재 위험 지점';
+    case 'next_checks': return '다음 확인 항목';
+    case 'root_cause_candidates': return '원인 후보';
+    case 'related_files': return '관련 파일';
+    case 'evidence': return '근거';
+    default:
+      return key.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
 }
 
 function formatResultStatus(status: CommandResult['status']): string {
