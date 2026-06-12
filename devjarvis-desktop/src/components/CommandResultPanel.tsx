@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { CommandResult } from '../types/jarvisCommand';
 
-const MAX_RENDERED_HISTORY = 2;
+const MAX_RENDERED_HISTORY = 6;
+const DEFAULT_APPROVED_FILE_LIMIT = 4;
 
 type CommandResultPanelProps = {
   results: CommandResult[];
@@ -12,6 +13,7 @@ type CommandResultPanelProps = {
 export function CommandResultPanel({ results, onAnalyzeProjectFiles }: CommandResultPanelProps) {
   const [selectedResult, setSelectedResult] = useState<CommandResult | null>(null);
   const [currentResult, ...historyResults] = results;
+  const renderedHistory = historyResults.slice(0, MAX_RENDERED_HISTORY);
 
   return (
     <aside className="result-panel" aria-label="Command results">
@@ -26,15 +28,23 @@ export function CommandResultPanel({ results, onAnalyzeProjectFiles }: CommandRe
         ) : (
           <>
             <section className="result-group" aria-label="현재 command result">
-              <span className="result-group-label">현재</span>
+              <div className="result-group-heading">
+                <span className="result-group-label">현재</span>
+              </div>
               <ResultCard result={currentResult} onOpen={() => setSelectedResult(currentResult)} />
             </section>
-            {historyResults.length > 0 && (
-              <section className="result-group" aria-label="Previous command results">
-                <span className="result-group-label">히스토리</span>
-                {historyResults.slice(0, MAX_RENDERED_HISTORY).map((result) => (
-                  <ResultCard key={result.id} result={result} compact onOpen={() => setSelectedResult(result)} />
-                ))}
+
+            {renderedHistory.length > 0 && (
+              <section className="result-group result-group-history" aria-label="Previous command results">
+                <div className="result-group-heading">
+                  <span className="result-group-label">히스토리</span>
+                  <strong>{historyResults.length}건</strong>
+                </div>
+                <div className="result-history-list">
+                  {renderedHistory.map((result) => (
+                    <ResultCard key={result.id} result={result} compact onOpen={() => setSelectedResult(result)} />
+                  ))}
+                </div>
               </section>
             )}
           </>
@@ -61,6 +71,7 @@ type ResultCardProps = {
 
 function ResultCard({ result, compact = false, onOpen }: ResultCardProps) {
   const relatedFiles = result.metadata?.relatedProjectFiles ?? [];
+  const preview = result.metadata?.analysisPreview ?? result.summary;
 
   return (
     <article className={`result-card result-${result.status} ${compact ? 'result-card-compact' : ''}`}>
@@ -76,7 +87,7 @@ function ResultCard({ result, compact = false, onOpen }: ResultCardProps) {
         </div>
       </div>
       <strong>{result.metadata?.analysisTitle ?? result.title}</strong>
-      <p>{formatInlineResultText(result.metadata?.analysisPreview ?? result.summary)}</p>
+      <p>{preview}</p>
       {!compact && relatedFiles.length > 0 && (
         <div className="related-file-preview">
           <span>후보 파일</span>
@@ -103,12 +114,14 @@ type ResultDetailDialogProps = {
 
 function ResultDetailDialog({ result, onClose, onAnalyzeProjectFiles }: ResultDetailDialogProps) {
   const title = result.metadata?.analysisTitle ?? result.title;
-  const summary = formatUserFacingDetailText(result.metadata?.analysisSummary ?? result.summary);
+  const summary = result.metadata?.analysisSummary ?? result.summary;
   const detail = result.metadata?.analysisDetail ?? result.detail ?? null;
   const actionItems = result.metadata?.analysisActionItems ?? [];
   const relatedFiles = result.metadata?.relatedProjectFiles ?? [];
   const timestamp = result.completedAt ?? result.createdAt;
-  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [selectedPaths, setSelectedPaths] = useState<string[]>(() => relatedFiles
+    .slice(0, DEFAULT_APPROVED_FILE_LIMIT)
+    .map((file) => file.relativePath));
 
   useEffect(() => {
     function closeOnEscape(event: KeyboardEvent) {
@@ -171,38 +184,36 @@ function ResultDetailDialog({ result, onClose, onAnalyzeProjectFiles }: ResultDe
           {detail && detail.trim().length > 0 && detail.trim() !== summary.trim() && (
             <section>
               <h3>상세</h3>
-              <pre>{formatUserFacingDetailText(detail)}</pre>
+              <pre>{formatDetailText(detail)}</pre>
             </section>
           )}
 
           {relatedFiles.length > 0 && (
             <section>
-              <details className="detail-advanced-section">
-                <summary>고급: 특정 파일 추가 분석</summary>
-                <p className="detail-helper-text">
-                  Project Deep Index 결과가 부족할 때만 추가로 확인할 파일을 선택하세요. 민감 파일은 정책상 차단됩니다.
-                </p>
-                <div className="related-file-list related-file-list-selectable">
-                  {relatedFiles.map((file) => (
-                    <label className="related-file-row related-file-row-selectable" key={file.relativePath}>
-                      <input
-                        type="checkbox"
-                        checked={selectedSet.has(file.relativePath)}
-                        onChange={() => togglePath(file.relativePath)}
-                      />
-                      <code>{file.relativePath}</code>
-                      <span>{file.matchReasons.join(', ') || file.language || file.extension || 'file'}</span>
-                    </label>
-                  ))}
+              <h3>고급: 추가 파일 정밀 분석</h3>
+              <p className="detail-helper-text">
+                필요한 파일만 선택해 로컬에서 추가 분석할 수 있습니다. 민감 파일은 정책상 차단됩니다.
+              </p>
+              <div className="related-file-list related-file-list-selectable">
+                {relatedFiles.map((file) => (
+                  <label className="related-file-row related-file-row-selectable" key={file.relativePath}>
+                    <input
+                      type="checkbox"
+                      checked={selectedSet.has(file.relativePath)}
+                      onChange={() => togglePath(file.relativePath)}
+                    />
+                    <code>{file.relativePath}</code>
+                    <span>{file.matchReasons.join(', ') || file.language || file.extension || 'file'}</span>
+                  </label>
+                ))}
+              </div>
+              {onAnalyzeProjectFiles && (
+                <div className="detail-action-row">
+                  <button type="button" disabled={!canAnalyzeSelection} onClick={submitSelection}>
+                    선택 파일 로컬 분석
+                  </button>
                 </div>
-                {onAnalyzeProjectFiles && (
-                  <div className="detail-action-row">
-                    <button type="button" disabled={!canAnalyzeSelection} onClick={submitSelection}>
-                      선택 파일 로컬 분석
-                    </button>
-                  </div>
-                )}
-              </details>
+              )}
             </section>
           )}
 
@@ -213,7 +224,7 @@ function ResultDetailDialog({ result, onClose, onAnalyzeProjectFiles }: ResultDe
                 {result.metadata.projectSelectedFiles.map((relativePath) => (
                   <div className="related-file-row" key={relativePath}>
                     <code>{relativePath}</code>
-                    <span>approved</span>
+                    <span>승인됨</span>
                   </div>
                 ))}
               </div>
@@ -234,7 +245,7 @@ function ResultDetailDialog({ result, onClose, onAnalyzeProjectFiles }: ResultDe
           {result.detail && result.detail.trim().length > 0 && result.detail !== detail && (
             <section>
               <h3>요청</h3>
-              <pre>{formatUserFacingDetailText(result.detail)}</pre>
+              <pre>{result.detail}</pre>
             </section>
           )}
         </div>
@@ -243,121 +254,11 @@ function ResultDetailDialog({ result, onClose, onAnalyzeProjectFiles }: ResultDe
   );
 }
 
-function formatInlineResultText(value: string): string {
-  const formatted = formatUserFacingDetailText(value).replace(/\s+/g, ' ').trim();
-  return formatted.length > 220 ? `${formatted.slice(0, 217)}...` : formatted;
-}
-
-function formatUserFacingDetailText(value: string): string {
-  const normalized = stripMarkdownJsonFence(value).trim();
-  if (!normalized) return '';
-
-  const parsed = parseJsonValue(normalized);
-  if (parsed !== null) {
-    return formatJsonValueForUser(parsed);
-  }
-
-  return normalized
+function formatDetailText(detail: string): string {
+  return detail
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
     .join('\n');
-}
-
-function stripMarkdownJsonFence(value: string): string {
-  return value
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/```$/i, '')
-    .trim();
-}
-
-function parseJsonValue(value: string): unknown | null {
-  const trimmed = value.trim();
-  if (!(trimmed.startsWith('{') && trimmed.endsWith('}')) && !(trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(trimmed) as unknown;
-  } catch {
-    return null;
-  }
-}
-
-function formatJsonValueForUser(value: unknown): string {
-  if (Array.isArray(value)) {
-    return value.map((item) => formatJsonListItem(item)).filter(Boolean).join('\n');
-  }
-
-  if (isRecord(value)) {
-    const lines: string[] = [];
-    for (const [key, entry] of Object.entries(value)) {
-      if (entry === null || entry === undefined || entry === '') continue;
-      const label = formatJsonLabel(key);
-      if (Array.isArray(entry)) {
-        const items = entry.map((item) => formatJsonListItem(item)).filter(Boolean);
-        if (items.length > 0) lines.push(`[${label}]`, ...items);
-        continue;
-      }
-      if (isRecord(entry)) {
-        const nested = formatJsonValueForUser(entry);
-        if (nested) lines.push(`[${label}]`, nested);
-        continue;
-      }
-      lines.push(`[${label}]`, `- ${String(entry)}`);
-    }
-    return lines.join('\n');
-  }
-
-  return String(value);
-}
-
-function formatJsonListItem(value: unknown): string {
-  if (Array.isArray(value)) {
-    const nested = formatJsonValueForUser(value);
-    return nested ? `- ${nested.replace(/\n/g, '\n  ')}` : '';
-  }
-
-  if (isRecord(value)) {
-    const pairs = Object.entries(value)
-      .filter(([, entry]) => entry !== null && entry !== undefined && entry !== '')
-      .map(([key, entry]) => `${formatJsonLabel(key)}: ${formatJsonScalar(entry)}`);
-    return pairs.length > 0 ? `- ${pairs.join(' / ')}` : '';
-  }
-
-  return `- ${String(value)}`;
-}
-
-function formatJsonScalar(value: unknown): string {
-  if (Array.isArray(value)) return value.map((item) => formatJsonScalar(item)).join(', ');
-  if (isRecord(value)) {
-    return Object.entries(value)
-      .map(([key, entry]) => `${formatJsonLabel(key)} ${formatJsonScalar(entry)}`)
-      .join(', ');
-  }
-  return String(value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function formatJsonLabel(key: string): string {
-  const normalized = key.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
-  switch (normalized) {
-    case 'summary': return '요약';
-    case 'detail': return '상세';
-    case 'action_items': return '다음 확인 액션';
-    case 'runtime_flow': return '실행 흐름';
-    case 'module_boundaries': return '모듈 경계';
-    case 'ui_api_service_links': return 'UI/API/서비스 연결';
-    case 'likely_risk_points': return '잠재 위험 지점';
-    case 'next_checks': return '다음 확인 항목';
-    case 'root_cause_candidates': return '원인 후보';
-    case 'related_files': return '관련 파일';
-    case 'evidence': return '근거';
-    default:
-      return key.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
-  }
 }
 
 function formatResultStatus(status: CommandResult['status']): string {
@@ -368,6 +269,8 @@ function formatResultStatus(status: CommandResult['status']): string {
 
 function formatResultTime(value: string): string {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '--:--';
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return date.toLocaleTimeString('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
