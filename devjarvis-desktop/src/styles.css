@@ -752,14 +752,6 @@ input:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  min-width: 0;
-}
-
-.result-card-topline-actions {
-  display: inline-flex;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: 0.45rem;
 }
 
 .panel-heading span,
@@ -784,8 +776,7 @@ input:disabled {
   display: grid;
   gap: 0.55rem;
   min-height: 0;
-  overflow: auto;
-  padding-right: 0.15rem;
+  overflow: hidden;
 }
 
 .empty-result,
@@ -822,7 +813,7 @@ input:disabled {
   font-size: 0.76rem;
   line-height: 1.38;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
 }
 
 .result-meta-row {
@@ -903,21 +894,26 @@ input:disabled {
   margin-top: 4px;
 }
 
-.result-detail-button {
-  flex: 0 0 auto;
-  border: 1px solid rgba(103, 232, 249, 0.28);
+.result-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.1rem;
+}
+
+.result-card-actions button {
+  border: 1px solid rgba(103, 232, 249, 0.22);
   border-radius: 999px;
   padding: 0.26rem 0.58rem;
-  background: rgba(14, 165, 233, 0.12);
-  color: rgba(199, 249, 255, 0.94);
+  background: rgba(14, 165, 233, 0.1);
+  color: rgba(199, 249, 255, 0.9);
   font-size: 0.68rem;
   font-weight: 900;
   cursor: pointer;
 }
 
-.result-detail-button:hover {
-  border-color: rgba(103, 232, 249, 0.54);
-  background: rgba(14, 165, 233, 0.22);
+.result-card-actions button:hover {
+  border-color: rgba(103, 232, 249, 0.5);
+  background: rgba(14, 165, 233, 0.2);
 }
 
 .result-detail-overlay {
@@ -1284,4 +1280,143 @@ input:disabled {
   font-size: 0.68rem;
   font-weight: 900;
   text-transform: uppercase;
+}
+
+/* Viewport-safe core layout: Core no longer owns command history/readout rows. */
+.app-shell {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.command-shell-layout {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.main-command-zone {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.jarvis-core-panel {
+  min-height: 0;
+  max-height: 100%;
+}
+
+.core-stage {
+  min-height: 0;
+  padding: clamp(1rem, 3vh, 2rem);
+}
+
+.orb-shell {
+  width: min(38vw, 46vh, 28rem);
+}
+
+.core-readout {
+  bottom: clamp(1rem, 4vh, 2.3rem);
+  max-width: min(88%, 34rem);
+}
+
+.core-readout strong {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: clamp(1.6rem, 3.5vw, 3.2rem);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.core-helper {
+  display: -webkit-box;
+  max-width: 100%;
+  margin: 0.25rem 0 0;
+  overflow: hidden;
+  color: rgba(167, 243, 208, 0.82);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.core-helper-error {
+  color: #fecaca;
+}
+
+.command-readout {
+  display: none;
+}
+
+.result-card-actions-inline {
+  align-items: center;
+  margin-top: 0;
+}
+
+.result-card-actions-inline time {
+  white-space: nowrap;
+}
+
+.related-file-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.related-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  border: 1px solid rgba(103, 232, 249, 0.12);
+  border-radius: 0.72rem;
+  padding: 0.52rem 0.64rem;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.related-file-row code {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(224, 242, 254, 0.9);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.related-file-row span {
+  color: rgba(186, 230, 253, 0.62);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.related-file-row-selectable {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  cursor: pointer;
+}
+
+.related-file-row-selectable input {
+  accent-color: #22d3ee;
+}
+
+.detail-helper-text {
+  color: rgba(186, 230, 253, 0.72);
+  font-size: 0.78rem;
+}
+
+.detail-action-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.detail-action-row button {
+  border: 1px solid rgba(103, 232, 249, 0.26);
+  border-radius: 999px;
+  padding: 0.55rem 0.85rem;
+  color: rgba(199, 249, 255, 0.94);
+  background: rgba(14, 165, 233, 0.14);
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.detail-action-row button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
