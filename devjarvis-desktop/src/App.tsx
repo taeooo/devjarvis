@@ -878,18 +878,16 @@ function App() {
     });
 
     const analysis = mapLocalAgentAnalysisResponse(command, { textLength: text.length } as ScreenOcrResponse, response);
-    const fallbackSummary = buildProjectDeepIndexSummary(deepIndex);
-    const fallbackDetail = buildProjectDeepIndexDetail(deepIndex);
+    const summary = buildProjectDeepIndexSummary(deepIndex);
+    const detail = buildProjectDeepIndexDetail(deepIndex, analysis);
 
     return {
       ...analysis,
       title: '프로젝트 전체 흐름 분석',
-      summary: normalizeAnalysisText(analysis.summary, fallbackSummary),
-      detail: normalizeAnalysisText(analysis.detail ?? '', fallbackDetail),
-      preview: summarizePreview(normalizeAnalysisText(analysis.summary, fallbackSummary), analysis.detail ?? fallbackDetail),
-      actionItems: analysis.actionItems.length > 0
-        ? analysis.actionItems
-        : ['에러 화면 진단 시 로컬 프로젝트 인덱스와 OCR 결과를 함께 사용하세요.'],
+      summary,
+      detail,
+      preview: summarizePreview(summary, detail),
+      actionItems: buildProjectDeepIndexActionItems(deepIndex),
       textUsedLength: text.length,
     };
   }
@@ -1052,42 +1050,179 @@ function formatIndexedFileForAnalysis(file: ProjectDeepIndexFile): string {
 }
 
 function buildProjectDeepIndexSummary(deepIndex: ProjectDeepIndexResult): string {
-  const moduleNames = deepIndex.modules.slice(0, 5).map((module) => module.name).join(', ');
-  return `로컬에서 안전한 소스 ${deepIndex.indexedFileCount}개를 읽어 프로젝트 흐름 인덱스를 만들었습니다. 주요 모듈은 ${moduleNames || deepIndex.rootName}입니다.`;
+  const moduleRoles = buildModuleRoleSummaries(deepIndex).slice(0, 4).map((item) => `${item.name}(${item.role})`).join(', ');
+  const flowSummary = buildRuntimeFlowSummary(deepIndex);
+  return `${deepIndex.rootName} 프로젝트는 로컬에서 안전하게 읽은 소스 ${deepIndex.indexedFileCount}개를 기준으로 흐름 인덱스를 생성했습니다. 주요 경계는 ${moduleRoles || '등록된 모듈'}이며, ${flowSummary}`;
 }
 
-function buildProjectDeepIndexDetail(deepIndex: ProjectDeepIndexResult): string {
+function buildProjectDeepIndexDetail(
+  deepIndex: ProjectDeepIndexResult,
+  localAgentAnalysis?: ScreenAnalysisResponse,
+): string {
   const roleCounts = countBy(deepIndex.files, (file) => file.role);
+  const moduleRoles = buildModuleRoleSummaries(deepIndex);
+  const runtimeFiles = filesByRole(deepIndex, ['runtime-boundary', 'entrypoint']).slice(0, 16);
+  const boundaryFiles = filesByRole(deepIndex, ['ui-boundary', 'api-boundary', 'service', 'repository']).slice(0, 32);
+  const endpoints = collectIndexedEndpoints(deepIndex).slice(0, 18);
+  const symbols = collectIndexedSymbols(deepIndex).slice(0, 20);
+  const koreanLocalAgentDetail = getKoreanAnalysisText(localAgentAnalysis?.detail ?? '')
+    || getKoreanAnalysisText(localAgentAnalysis?.summary ?? '');
+
   const lines = [
-    '[Local Project Flow Index]',
-    `indexedFiles=${deepIndex.indexedFileCount}/${deepIndex.indexableFileCount}`,
-    `readBytes=${deepIndex.totalReadBytes}/${deepIndex.maxTotalBytes}`,
-    `skippedIndexableFiles=${deepIndex.skippedFileCount}`,
+    '[프로젝트 전체 흐름 판단]',
+    `- 분석 방식: 로컬 safe source 인덱스 기반`,
+    `- 인덱싱 파일: ${deepIndex.indexedFileCount}/${deepIndex.indexableFileCount}`,
+    `- 제외/스킵 파일: ${deepIndex.skippedFileCount}`,
+    `- 읽은 용량: ${formatByteCount(deepIndex.totalReadBytes)} / ${formatByteCount(deepIndex.maxTotalBytes)}`,
+    `- 런타임 흐름: ${buildRuntimeFlowSummary(deepIndex)}`,
     '',
-    '[Module Map]',
-    ...deepIndex.modules.slice(0, 12).map((module) => `- ${module.name}: files=${module.fileCount}, indexed=${module.indexedFileCount}`),
+    '[모듈별 역할 추정]',
+    ...moduleRoles.slice(0, 12).map((module) => `- ${module.name}: ${module.role} / indexed ${module.indexedFileCount}/${module.fileCount}`),
     '',
-    '[Role Map]',
-    ...Array.from(roleCounts.entries()).map(([role, count]) => `- ${role}: ${count}`),
+    '[런타임 경계와 실행 진입점]',
+    ...formatRelativePathList(runtimeFiles, 18),
     '',
-    '[Runtime / Entrypoint Files]',
-    ...deepIndex.files
-      .filter((file) => file.role === 'runtime-boundary' || file.role === 'entrypoint')
-      .slice(0, 18)
-      .map((file) => `- ${file.relativePath}`),
+    '[UI / API / Service / Repository 연결 후보]',
+    ...formatIndexedFileList(boundaryFiles, 32),
     '',
-    '[API / Service / UI Boundary Files]',
-    ...deepIndex.files
-      .filter((file) => ['api-boundary', 'service', 'ui-boundary', 'repository'].includes(file.role))
-      .slice(0, 24)
-      .map((file) => `- ${file.relativePath} (${file.role})`),
+    '[감지된 endpoint 후보]',
+    ...(endpoints.length > 0 ? endpoints.map((item) => `- ${item}`) : ['- manifest/source excerpt 범위에서 endpoint 후보를 찾지 못했습니다.']),
     '',
-    '[Security Boundary]',
+    '[감지된 symbol 후보]',
+    ...(symbols.length > 0 ? symbols.map((item) => `- ${item}`) : ['- manifest/source excerpt 범위에서 symbol 후보를 찾지 못했습니다.']),
+    '',
+    '[역할 분포]',
+    ...Array.from(roleCounts.entries()).sort((a, b) => b[1] - a[1]).map(([role, count]) => `- ${formatProjectFileRole(role)}: ${count}`),
+    '',
+    '[에러 화면 진단 시 사용할 흐름]',
+    '- 화면 OCR에서 endpoint, 파일명, class/function/component 이름, status code를 추출합니다.',
+    '- 추출된 신호를 Project Deep Index의 endpoint/symbol/relative path와 매칭합니다.',
+    '- 매칭된 UI/API/service/repository 후보 파일을 우선 확인합니다.',
+    '- 필요하면 관련 파일만 다시 로컬에서 읽고 Local Agent + Ollama로 원인 후보를 좁힙니다.',
+    '',
+    '[현재 한계]',
+    '- 전체 파일을 무제한으로 LLM에 넣지 않고, 로컬 인덱스와 excerpt budget 안에서 분석합니다.',
+    '- 동적 라우팅, 런타임 DI, DB schema 연결은 다음 단계에서 별도 인덱서가 필요합니다.',
+    '',
+    '[보안 경계]',
     '- 파일 원문은 이 PC에서만 읽고 redaction 후 Local Agent로 전달합니다.',
-    '- NAS/AI Server로 파일 원문을 보내지 않습니다.',
+    '- NAS/Backend/AI Server로 파일 원문을 보내지 않습니다.',
+    '- 실제 OS absolute path와 rootPathAlias는 UI/LLM context에 노출하지 않습니다.',
   ];
 
+  if (koreanLocalAgentDetail) {
+    lines.push('', '[Local Agent 보조 판단]', koreanLocalAgentDetail);
+  }
+
   return lines.join('\n');
+}
+
+function buildProjectDeepIndexActionItems(deepIndex: ProjectDeepIndexResult): string[] {
+  const items = [
+    '에러 화면 진단 시 화면 OCR 결과를 Project Deep Index와 함께 매칭하세요.',
+    'UI/API/service/repository 후보 파일을 같은 흐름으로 확인하세요.',
+  ];
+
+  if (deepIndex.skippedFileCount > 0) {
+    items.push('스킵된 파일은 size/budget/보안 정책 때문에 제외되었는지 확인하세요.');
+  }
+
+  return items;
+}
+
+function buildModuleRoleSummaries(deepIndex: ProjectDeepIndexResult): Array<{ name: string; role: string; fileCount: number; indexedFileCount: number }> {
+  return deepIndex.modules.map((module) => ({
+    name: module.name,
+    role: inferModuleRole(module.name, deepIndex.files.filter((file) => file.relativePath.startsWith(`${module.name}/`))),
+    fileCount: module.fileCount,
+    indexedFileCount: module.indexedFileCount,
+  }));
+}
+
+function inferModuleRole(moduleName: string, files: ProjectDeepIndexFile[]): string {
+  const normalized = moduleName.toLowerCase();
+  const roleSet = new Set(files.map((file) => file.role));
+
+  if (normalized.includes('desktop') || roleSet.has('ui-boundary')) return 'Desktop/UI runtime';
+  if (normalized.includes('local-agent')) return 'Local Agent/OCR·LLM runtime';
+  if (normalized.includes('backend')) return 'Backend API/metadata service';
+  if (normalized.includes('ai-server')) return 'Server-side AI boundary';
+  if (normalized.includes('infra')) return 'Infrastructure/deployment boundary';
+  if (normalized.includes('docs')) return 'Documentation';
+  if (roleSet.has('api-boundary')) return 'API boundary';
+  if (roleSet.has('service')) return 'Service layer';
+  if (roleSet.has('repository')) return 'Persistence layer';
+  return 'Source module';
+}
+
+function buildRuntimeFlowSummary(deepIndex: ProjectDeepIndexResult): string {
+  const moduleNames = new Set(deepIndex.modules.map((module) => module.name.toLowerCase()));
+  const hasDesktop = Array.from(moduleNames).some((name) => name.includes('desktop'));
+  const hasLocalAgent = Array.from(moduleNames).some((name) => name.includes('local-agent'));
+  const hasBackend = Array.from(moduleNames).some((name) => name.includes('backend'));
+  const hasAiServer = Array.from(moduleNames).some((name) => name.includes('ai-server'));
+
+  const flow = [];
+  if (hasDesktop) flow.push('Desktop UI/Tauri');
+  if (hasLocalAgent) flow.push('Local Agent');
+  if (hasBackend) flow.push('Backend metadata/API');
+  if (hasAiServer) flow.push('AI Server boundary');
+
+  if (flow.length === 0) {
+    return '모듈 경계를 추가로 확인해야 합니다.';
+  }
+
+  return `${flow.join(' → ')} 순서의 경계를 우선 확인하는 구조입니다.`;
+}
+
+function filesByRole(deepIndex: ProjectDeepIndexResult, roles: string[]): ProjectDeepIndexFile[] {
+  const roleSet = new Set(roles);
+  return deepIndex.files.filter((file) => roleSet.has(file.role));
+}
+
+function formatRelativePathList(files: ProjectDeepIndexFile[], maxItems: number): string[] {
+  const items = files.slice(0, maxItems).map((file) => `- ${file.relativePath}`);
+  return items.length > 0 ? items : ['- 후보 없음'];
+}
+
+function formatIndexedFileList(files: ProjectDeepIndexFile[], maxItems: number): string[] {
+  const items = files.slice(0, maxItems).map((file) => `- ${file.relativePath} (${formatProjectFileRole(file.role)})`);
+  return items.length > 0 ? items : ['- 후보 없음'];
+}
+
+function collectIndexedEndpoints(deepIndex: ProjectDeepIndexResult): string[] {
+  return deepIndex.files.flatMap((file) => file.endpoints.map((endpoint) => `${file.relativePath}: ${endpoint}`));
+}
+
+function collectIndexedSymbols(deepIndex: ProjectDeepIndexResult): string[] {
+  return deepIndex.files.flatMap((file) => file.symbols.slice(0, 4).map((symbol) => `${file.relativePath}: ${symbol}`));
+}
+
+function formatProjectFileRole(role: string): string {
+  switch (role) {
+    case 'runtime-boundary': return '런타임 경계';
+    case 'entrypoint': return '실행 진입점';
+    case 'api-boundary': return 'API 경계';
+    case 'service': return '서비스 계층';
+    case 'repository': return '저장소 계층';
+    case 'ui-boundary': return 'UI 경계';
+    case 'config': return '설정';
+    default: return role;
+  }
+}
+
+function formatByteCount(value: number): string {
+  if (value < 1024) return `${value}B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)}KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function getKoreanAnalysisText(value: string): string {
+  const text = normalizeAnalysisText(value, '').trim();
+  if (!text || !/[가-힣]/.test(text)) {
+    return '';
+  }
+  return text;
 }
 
 function buildProjectDeepIndexScreenContext(deepIndex: ProjectDeepIndexResult): string {

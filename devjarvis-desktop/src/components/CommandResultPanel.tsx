@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import type { CommandResult } from '../types/jarvisCommand';
 
 const MAX_RENDERED_HISTORY = 2;
-const DEFAULT_APPROVED_FILE_LIMIT = 4;
 
 type CommandResultPanelProps = {
   results: CommandResult[];
@@ -109,9 +108,7 @@ function ResultDetailDialog({ result, onClose, onAnalyzeProjectFiles }: ResultDe
   const actionItems = result.metadata?.analysisActionItems ?? [];
   const relatedFiles = result.metadata?.relatedProjectFiles ?? [];
   const timestamp = result.completedAt ?? result.createdAt;
-  const [selectedPaths, setSelectedPaths] = useState<string[]>(() => relatedFiles
-    .slice(0, DEFAULT_APPROVED_FILE_LIMIT)
-    .map((file) => file.relativePath));
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
 
   useEffect(() => {
     function closeOnEscape(event: KeyboardEvent) {
@@ -180,30 +177,32 @@ function ResultDetailDialog({ result, onClose, onAnalyzeProjectFiles }: ResultDe
 
           {relatedFiles.length > 0 && (
             <section>
-              <h3>추가 선택 파일 분석</h3>
-              <p className="detail-helper-text">
-                더 확인할 파일만 선택하세요. 민감 파일은 정책상 차단됩니다.
-              </p>
-              <div className="related-file-list related-file-list-selectable">
-                {relatedFiles.map((file) => (
-                  <label className="related-file-row related-file-row-selectable" key={file.relativePath}>
-                    <input
-                      type="checkbox"
-                      checked={selectedSet.has(file.relativePath)}
-                      onChange={() => togglePath(file.relativePath)}
-                    />
-                    <code>{file.relativePath}</code>
-                    <span>{file.matchReasons.join(', ') || file.language || file.extension || 'file'}</span>
-                  </label>
-                ))}
-              </div>
-              {onAnalyzeProjectFiles && (
-                <div className="detail-action-row">
-                  <button type="button" disabled={!canAnalyzeSelection} onClick={submitSelection}>
-                    선택 파일 로컬 분석
-                  </button>
+              <details className="detail-advanced-section">
+                <summary>고급: 특정 파일 추가 분석</summary>
+                <p className="detail-helper-text">
+                  Project Deep Index 결과가 부족할 때만 추가로 확인할 파일을 선택하세요. 민감 파일은 정책상 차단됩니다.
+                </p>
+                <div className="related-file-list related-file-list-selectable">
+                  {relatedFiles.map((file) => (
+                    <label className="related-file-row related-file-row-selectable" key={file.relativePath}>
+                      <input
+                        type="checkbox"
+                        checked={selectedSet.has(file.relativePath)}
+                        onChange={() => togglePath(file.relativePath)}
+                      />
+                      <code>{file.relativePath}</code>
+                      <span>{file.matchReasons.join(', ') || file.language || file.extension || 'file'}</span>
+                    </label>
+                  ))}
                 </div>
-              )}
+                {onAnalyzeProjectFiles && (
+                  <div className="detail-action-row">
+                    <button type="button" disabled={!canAnalyzeSelection} onClick={submitSelection}>
+                      선택 파일 로컬 분석
+                    </button>
+                  </div>
+                )}
+              </details>
             </section>
           )}
 
