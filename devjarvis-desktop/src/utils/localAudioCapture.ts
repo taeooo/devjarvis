@@ -1,85 +1,80 @@
-export type LocalAudioCaptureSession = {
-  stop: () => Promise<LocalAudioClip>;
-};
+import type { LocalSttAudioPayload } from '../types/jarvisCommand';
 
-export type LocalAudioClip = {
-  blob: Blob;
-  mimeType: string;
-  byteSize: number;
-  durationMillis: number;
-  recordedAt: string;
-};
-
-const PREFERRED_AUDIO_MIME_TYPES = [
+const DEFAULT_RECORDING_MILLIS = 6_000;
+const MAX_AUDIO_BYTES = 12_000_000;
+const AUDIO_MIME_CANDIDATES = [
   'audio/webm;codecs=opus',
   'audio/webm',
   'audio/ogg;codecs=opus',
   'audio/ogg',
-  'audio/wav',
-];
+] as const;
 
-export async function startLocalAudioCapture(): Promise<LocalAudioCaptureSession> {
+export async function recordShortLocalAudio(durationMillis = DEFAULT_RECORDING_MILLIS): Promise<LocalSttAudioPayload> {
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-    throw new Error('Local audio capture is not available in this WebView.');
+    throw new Error('마이크 녹음을 사용할 수 없습니다. 브라우저/웹뷰 권한을 확인해주세요.');
   }
 
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
-      channelCount: 1,
-      noiseSuppression: true,
       echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
     },
     video: false,
   });
 
-  const chunks: BlobPart[] = [];
-  const mimeType = resolveSupportedAudioMimeType();
-  const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-  const startedAt = performance.now();
-  const recordedAt = new Date().toISOString();
+  try {
+    const mimeType = resolveSupportedAudioMimeType();
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const chunks: BlobPart[] = [];
+    const startedAt = Date.now();
 
-  recorder.addEventListener('dataavailable', (event) => {
-    if (event.data.size > 0) {
-      chunks.push(event.data);
-    }
-  });
-
-  recorder.start();
-
-  return {
-    stop: () => new Promise<LocalAudioClip>((resolve, reject) => {
-      const cleanup = () => {
-        stream.getTracks().forEach((track) => track.stop());
-      };
-
-      recorder.addEventListener('stop', () => {
-        cleanup();
-        const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' });
-        resolve({
-          blob,
-          mimeType: blob.type || 'audio/webm',
-          byteSize: blob.size,
-          durationMillis: Math.max(0, Math.round(performance.now() - startedAt)),
-          recordedAt,
-        });
-      }, { once: true });
-
-      recorder.addEventListener('error', () => {
-        cleanup();
-        reject(new Error('Local audio recording failed.'));
-      }, { once: true });
-
-      if (recorder.state === 'inactive') {
-        cleanup();
-        reject(new Error('Local audio recording is already stopped.'));
-        return;
+    recorder.addEventListener('dataavailable', (event) => {
+      if (event.data.size > 0) {
+        chunks.push(event.data);
       }
+    });
 
-      recorder.stop();
-    }),
-  };
+    const stopped = new Promise<void>((resolve, reject) => {
+      recorder.addEventListener('stop', () => resolve(), { once: true });
+      recorder.addEventListener('error', () => reject(new Error('마이크 녹음 중 오류가 발생했습니다.')), { once: true });
+    });
+
+    recorder.start();
+    window.setTimeout(() => {
+      if (recorder.state !== 'inactive') {
+        recorder.stop();
+      }
+    }, durationMillis);
+
+    await stopped;
+    const blob = new Blob(chunks, { type: normalizeAudioMimeType(recorder.mimeType || mimeType || 'audio/webm') });
+    if (blob.size <= 0) {
+      throw new Error('녹음된 음성이 없습니다. 다시 말씀해주세요.');
+    }
+    if (blob.size > MAX_AUDIO_BYTES) {
+      throw new Error('녹음 길이가 너무 깁니다. 짧게 다시 말씀해주세요.');
+    }
+
+    return {
+      blob,
+      mimeType: normalizeAudioMimeType(blob.type || 'audio/webm'),
+      byteSize: blob.size,
+      durationMillis: Date.now() - startedAt,
+      recordedAt: new Date().toISOString(),
+    };
+  } finally {
+    stream.getTracks().forEach((track) => track.stop());
+  }
 }
 
-function resolveSupportedAudioMimeType(): string | undefined {
-  return PREFERRED_AUDIO_MIME_TYPES.find((candidate) => MediaRecorder.isTypeSupported(candidate));
+function resolveSupportedAudioMimeType(): string {
+  return AUDIO_MIME_CANDIDATES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) ?? '';
+}
+
+function normalizeAudioMimeType(value: string): LocalSttAudioPayload['mimeType'] {
+  if (value.includes('ogg')) return 'audio/ogg';
+  if (value.includes('mpeg') || value.includes('mp3')) return 'audio/mpeg';
+  if (value.includes('wav')) return 'audio/wav';
+  return 'audio/webm';
 }
