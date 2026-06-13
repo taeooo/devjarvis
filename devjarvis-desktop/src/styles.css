@@ -1421,25 +1421,6 @@ input:disabled {
   opacity: 0.5;
 }
 
-.detail-advanced-section {
-  border: 1px solid rgba(103, 232, 249, 0.14);
-  border-radius: 0.85rem;
-  padding: 0.75rem;
-  background: rgba(2, 6, 23, 0.24);
-}
-
-.detail-advanced-section summary {
-  cursor: pointer;
-  color: rgba(125, 211, 252, 0.92);
-  font-size: 0.78rem;
-  font-weight: 900;
-  letter-spacing: 0.04em;
-}
-
-.detail-advanced-section[open] summary {
-  margin-bottom: 0.65rem;
-}
-
 /* User-facing context/result cleanup */
 .context-grid-compact {
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1515,22 +1496,22 @@ input:disabled {
   -webkit-line-clamp: 4;
 }
 
-.result-card-compact p {
-  -webkit-line-clamp: 3;
-}
-
 .result-card-compact {
   opacity: 0.92;
 }
 
-.related-file-preview,
-.result-action-list,
-.result-card small {
-  margin-top: 0.15rem;
+.result-card-compact p {
+  -webkit-line-clamp: 3;
 }
 
-.result-card-actions-inline button {
-  flex-shrink: 0;
+.result-card-actions-inline button,
+.voice-push-button {
+  user-select: none;
+}
+
+.voice-recording .voice-meter-disabled span {
+  opacity: 0.85;
+  animation: meter-bounce 1.1s ease-in-out infinite;
 }
 
 @media (max-width: 1280px) {

@@ -19,20 +19,13 @@ import {
   transcribeWithLocalAgent,
 } from './api/localAgentClient';
 import { notifyCommandResult } from './utils/nativeWindow';
+import { startLocalAudioCapture, type LocalAudioCaptureSession } from './utils/localAudioCapture';
 import { createClientId, createCommandInput, createCommandPlan } from './utils/commandRouter';
 import {
   buildProjectAwareScreenDiagnosis,
   formatProjectDiagnosisContext,
   type ProjectAwareScreenDiagnosis,
 } from './utils/projectScreenDiagnosis';
-import {
-  buildScreenProjectIndexActionItems,
-  buildScreenProjectIndexDetail,
-  buildScreenProjectIndexDiagnosis,
-  buildScreenProjectIndexSummary,
-  formatScreenProjectIndexContext,
-  type ScreenProjectIndexDiagnosis,
-} from './utils/screenProjectIndexDiagnosis';
 import { captureScreenFrame, isScreenCaptureSupported } from './utils/screenCapture';
 import type {
   CommandInput,
@@ -51,7 +44,7 @@ import type {
   SystemStatus,
   VoiceState,
 } from './types/jarvisCommand';
-import type { ManifestFile, ManifestRegisterResponse, ProjectDeepIndexFile, ProjectDeepIndexResult, ProjectFileReadResult, ProjectResponse, ProjectScanResult } from './types/projectScanner';
+import type { ManifestFile, ManifestRegisterResponse, ProjectFileReadResult, ProjectResponse, ProjectScanResult } from './types/projectScanner';
 
 type SelectedProject = {
   rootPath: string;
@@ -112,9 +105,9 @@ function App() {
   const [registeredProject, setRegisteredProject] = useState<ProjectResponse | null>(null);
   const [latestSummary, setLatestSummary] = useState<ManifestRegisterResponse | null>(null);
   const [latestProjectScan, setLatestProjectScan] = useState<ProjectScanResult | null>(null);
-  const [latestProjectIndex, setLatestProjectIndex] = useState<ProjectDeepIndexResult | null>(null);
   const [micAvailable, setMicAvailable] = useState<boolean | null>(null);
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
+  const [audioCaptureSession, setAudioCaptureSession] = useState<LocalAudioCaptureSession | null>(null);
   const [screenContext, setScreenContext] = useState<ScreenContextSnapshot>(initialScreenContext);
   const [localAgentHealth, setLocalAgentHealth] = useState<LocalAgentHealthSnapshot>(initialLocalAgentHealth);
   const [isSelectingProject, setIsSelectingProject] = useState(false);
@@ -294,7 +287,6 @@ function App() {
       setRegisteredProject(null);
       setLatestSummary(null);
       setLatestProjectScan(null);
-      setLatestProjectIndex(null);
       setSystemMessage('Project context selected.');
     } catch (caught) {
       setErrorMessage(toErrorMessage(caught));
@@ -303,7 +295,11 @@ function App() {
     }
   }
 
-  async function handlePushToTalk() {
+  async function handlePushToTalkStart() {
+    if (isProcessingCommand || audioCaptureSession) {
+      return;
+    }
+
     setSystemMessage(null);
     setErrorMessage(null);
 
@@ -323,7 +319,34 @@ function App() {
         return;
       }
 
-      const response = await transcribeWithLocalAgent({ commandId: createClientId(), audio: null });
+      const session = await startLocalAudioCapture();
+      setAudioCaptureSession(session);
+      setVoiceState('recording');
+    } catch (caught) {
+      setAudioCaptureSession(null);
+      setVoiceState('error');
+      setErrorMessage(toErrorMessage(caught));
+    }
+  }
+
+  async function handlePushToTalkEnd() {
+    if (!audioCaptureSession) {
+      return;
+    }
+
+    const session = audioCaptureSession;
+    setAudioCaptureSession(null);
+    setVoiceState('processing');
+
+    try {
+      const clip = await session.stop();
+      const response = await transcribeWithLocalAgent({
+        commandId: createClientId(),
+        audio: clip.blob,
+        durationMillis: clip.durationMillis,
+        recordedAt: clip.recordedAt,
+      });
+
       if (response.textReady && response.text.trim().length > 0) {
         setVoiceState('text_ready');
         await handleTextCommandSubmit(response.text);
@@ -463,24 +486,18 @@ function App() {
         context,
       });
       const analysis = mapLocalAgentAnalysisResponse(command, { textLength: text.length } as ScreenOcrResponse, response);
-      const summary = buildApprovedFileAnalysisSummary(readResult);
-      const detail = buildApprovedFileAnalysisDetail(readResult, response);
-      const actionItems = mergeActionItems(
-        buildApprovedFileAnalysisActionItems(readResult),
-        analysis.actionItems,
-      );
       const completedResult: CommandResult = {
         ...startedResult,
-        title: '선택 파일 로컬 분석 완료',
-        summary,
+        title: '프로젝트 파일 분석 ready',
+        summary: analysis.summary,
         detail: '/project-files',
-        nextStep: '전문 보기에서 선택 파일 분석 결과를 확인하세요',
+        nextStep: '전문 보기에서 승인 파일 분석 결과를 확인하세요',
         metadata: {
-          analysisTitle: '선택 파일 로컬 분석',
-          analysisSummary: summary,
-          analysisDetail: detail,
-          analysisPreview: summarizePreview(summary, detail),
-          analysisActionItems: actionItems,
+          analysisTitle: analysis.title,
+          analysisSummary: analysis.summary,
+          analysisDetail: analysis.detail,
+          analysisPreview: analysis.preview,
+          analysisActionItems: analysis.actionItems,
           analysisSource: 'local_agent',
           projectFileReadMode: 'approved_selection',
           projectSelectedFiles: readResult.files.map((file) => file.relativePath),
@@ -527,8 +544,6 @@ function App() {
     let ocrResult: ScreenOcrResponse | null = null;
     let projectScan: ProjectScanResult | null = null;
     let projectDiagnosis: ProjectAwareScreenDiagnosis | null = null;
-    let projectIndexDiagnosis: ScreenProjectIndexDiagnosis | null = null;
-    let projectIndex: ProjectDeepIndexResult | null = null;
     const shouldUseProjectForScreenDiagnosis = plan.command.intent === 'screen_error_analysis' && selectedProject !== null;
 
     if (plan.needsScreenCapture) {
@@ -557,10 +572,7 @@ function App() {
       if (selectedProject) {
         const summary = await refreshProjectManifest(selectedProject);
         projectScan = summary.scan;
-        if (shouldUseProjectForScreenDiagnosis && selectedProject) {
-          projectIndex = await buildProjectDeepIndex(selectedProject);
-          messages.push('Project index ready');
-        } else if (shouldUseProjectForScreenDiagnosis) {
+        if (shouldUseProjectForScreenDiagnosis) {
           messages.push('Project context ready');
         }
         metadata.manifestTargetFileCount = summary.registration.targetFileCount;
@@ -582,19 +594,12 @@ function App() {
 
       if (shouldUseProjectForScreenDiagnosis && projectScan && ocrResult.textFound) {
         projectDiagnosis = buildProjectAwareScreenDiagnosis(ocrResult.text, projectScan.files);
-        if (projectIndex) {
-          projectIndexDiagnosis = buildScreenProjectIndexDiagnosis(ocrResult.text, projectIndex);
-        }
-        const relatedProjectFiles = mergeRelatedProjectFiles(
-          projectIndexDiagnosis?.relatedFiles ?? [],
-          projectDiagnosis.relatedFiles,
-        );
-        metadata.relatedProjectFiles = relatedProjectFiles;
-        metadata.projectAwareSignalCount = (projectIndexDiagnosis?.signals.length ?? 0) + projectDiagnosis.signals.length;
-        metadata.projectAwareFileCandidateCount = relatedProjectFiles.length;
+        metadata.relatedProjectFiles = projectDiagnosis.relatedFiles;
+        metadata.projectAwareSignalCount = projectDiagnosis.signals.length;
+        metadata.projectAwareFileCandidateCount = projectDiagnosis.relatedFiles.length;
       }
 
-      const analysisResult = await requestScreenAnalysis(plan.command, captured, ocrResult, projectDiagnosis, projectIndex, projectIndexDiagnosis);
+      const analysisResult = await requestScreenAnalysis(plan.command, captured, ocrResult, projectDiagnosis);
       messages.push(formatAnalysisPipelineMessage(analysisResult));
       metadata.analysisTitle = analysisResult.title;
       metadata.analysisSummary = analysisResult.summary;
@@ -608,12 +613,12 @@ function App() {
     if (!plan.needsScreenCapture && plan.needsProjectManifest && selectedProject && projectScan) {
       updateProcessingStage(plan.command.id, 'analyzing_project', 'Analyzing project');
       await ensureLocalAssistantReady();
+      const analysis = await requestProjectAnalysis(plan.command, projectScan);
       const projectFileCandidates = buildProjectFileCandidates(projectScan.files);
-      const analysis = await requestProjectAnalysis(plan.command, projectScan, projectFileCandidates);
       messages.push(analysis.summary);
       metadata.relatedProjectFiles = projectFileCandidates;
       metadata.projectAwareFileCandidateCount = projectFileCandidates.length;
-      metadata.projectFileReadMode = 'deep_index';
+      metadata.projectFileReadMode = 'candidate_only';
       metadata.analysisTitle = analysis.title;
       metadata.analysisSummary = analysis.summary;
       metadata.analysisDetail = analysis.detail;
@@ -756,8 +761,6 @@ function App() {
     captured: ScreenCaptureResult,
     ocrResult: ScreenOcrResponse,
     projectDiagnosis: ProjectAwareScreenDiagnosis | null = null,
-    projectIndex: ProjectDeepIndexResult | null = null,
-    projectIndexDiagnosis: ScreenProjectIndexDiagnosis | null = null,
   ): Promise<ScreenAnalysisResponse> {
     setScreenContext((current) => ({
       ...current,
@@ -767,7 +770,7 @@ function App() {
     }));
 
     try {
-      const response = await requestLocalScreenAnalysis(command, captured, ocrResult, projectDiagnosis, projectIndex, projectIndexDiagnosis);
+      const response = await requestLocalScreenAnalysis(command, captured, ocrResult, projectDiagnosis);
 
       setScreenContext((current) => ({
         ...current,
@@ -794,8 +797,6 @@ function App() {
     captured: ScreenCaptureResult,
     ocrResult: ScreenOcrResponse,
     projectDiagnosis: ProjectAwareScreenDiagnosis | null,
-    projectIndex: ProjectDeepIndexResult | null,
-    projectIndexDiagnosis: ScreenProjectIndexDiagnosis | null,
   ): Promise<ScreenAnalysisResponse> {
     if (!ocrResult.textFound || ocrResult.text.trim().length === 0) {
       return {
@@ -818,15 +819,10 @@ function App() {
       commandId: command.id,
       intent: command.intent,
       text: ocrResult.text,
-      context: buildLocalAnalysisContext(command, captured, ocrResult, projectDiagnosis, projectIndex, projectIndexDiagnosis),
+      context: buildLocalAnalysisContext(command, captured, ocrResult, projectDiagnosis),
     });
 
-    const mapped = mapLocalAgentAnalysisResponse(command, ocrResult, localResponse);
-    if (command.intent === 'screen_error_analysis' && projectIndexDiagnosis) {
-      return buildProjectIndexedScreenAnalysisResponse(command, ocrResult, mapped, projectIndexDiagnosis);
-    }
-
-    return mapped;
+    return mapLocalAgentAnalysisResponse(command, ocrResult, localResponse);
   }
 
   async function refreshProjectManifest(projectContext: SelectedProject): Promise<{ registration: ManifestRegisterResponse; scan: ProjectScanResult }> {
@@ -857,14 +853,6 @@ function App() {
     }
   }
 
-
-
-  async function buildProjectDeepIndex(projectContext: SelectedProject): Promise<ProjectDeepIndexResult> {
-    const index = await invoke<ProjectDeepIndexResult>('build_project_deep_index', { rootPath: projectContext.rootPath });
-    setLatestProjectIndex(index);
-    return index;
-  }
-
   function resetStaleContextForCommand(command: CommandInput) {
     if (command.contextMode === 'screen' || command.contextMode === 'auto') return;
 
@@ -875,37 +863,51 @@ function App() {
     }));
   }
 
-  async function requestProjectAnalysis(
-    command: CommandInput,
-    scanResult: ProjectScanResult,
-    candidates: RelatedProjectFileCandidate[],
-  ): Promise<ScreenAnalysisResponse> {
-    if (!selectedProject) {
-      throw new Error('Project context is not selected.');
+  async function requestProjectAnalysis(command: CommandInput, scanResult: ProjectScanResult): Promise<ScreenAnalysisResponse> {
+    const candidates = buildProjectFileCandidates(scanResult.files);
+    const priorityPaths = candidates.slice(0, 18).map((file) => file.relativePath);
+    let readResult: ProjectFileReadResult | null = null;
+    let localAgentHint: ScreenAnalysisResponse | null = null;
+
+    if (selectedProject && priorityPaths.length > 0) {
+      const projectReadResult = await invoke<ProjectFileReadResult>('read_project_file_selection', {
+        rootPath: selectedProject.rootPath,
+        relativePaths: priorityPaths,
+      });
+      readResult = projectReadResult;
+
+      if (projectReadResult.files.length > 0) {
+        const context = buildApprovedFileAnalysisContext(projectReadResult);
+        const text = buildApprovedFileAnalysisText(projectReadResult);
+        const response = await analyzeWithLocalAgent({
+          commandId: command.id,
+          intent: command.intent,
+          text,
+          context,
+        });
+        localAgentHint = mapLocalAgentAnalysisResponse(command, { textLength: text.length } as ScreenOcrResponse, response);
+      }
     }
 
-    const deepIndex = await buildProjectDeepIndex(selectedProject);
-    const context = buildProjectDeepIndexContext(scanResult, deepIndex, candidates);
-    const text = buildProjectDeepIndexText(deepIndex);
-    const response = await analyzeWithLocalAgent({
-      commandId: command.id,
-      intent: command.intent,
-      text,
-      context,
-    });
-
-    const analysis = mapLocalAgentAnalysisResponse(command, { textLength: text.length } as ScreenOcrResponse, response);
-    const summary = buildProjectDeepIndexSummary(deepIndex);
-    const detail = buildProjectDeepIndexDetail(deepIndex, analysis);
+    const summary = buildProjectDeepIndexSummary(scanResult, readResult);
+    const detail = buildProjectDeepIndexDetail(scanResult, candidates, readResult, localAgentHint);
 
     return {
-      ...analysis,
+      requestId: command.id,
+      provider: 'local-agent',
+      status: 'completed',
+      intent: command.intent,
       title: '프로젝트 전체 흐름 분석',
       summary,
       detail,
-      preview: summarizePreview(summary, detail),
-      actionItems: buildProjectDeepIndexActionItems(deepIndex),
-      textUsedLength: text.length,
+      preview: summary,
+      actionItems: [
+        '에러 화면 진단 시 Project Index와 OCR 신호를 함께 확인하세요.',
+        '추가로 확인할 파일만 전문 보기에서 선택해 정밀 분석하세요.',
+      ],
+      textUsedLength: readResult?.totalBytes ?? 0,
+      warnings: readResult?.rejected.map((file) => file.reason) ?? [],
+      analyzedAt: new Date().toISOString(),
     };
   }
 
@@ -946,7 +948,8 @@ function App() {
             micAvailable={micAvailable}
             voiceState={voiceState}
             disabled={isProcessingCommand}
-            onPushToTalk={handlePushToTalk}
+            onPushToTalkStart={handlePushToTalkStart}
+            onPushToTalkEnd={handlePushToTalkEnd}
           />
           <ContextStatusPanel
             items={contextItems}
@@ -1010,331 +1013,12 @@ function getDefaultLocalAssistantSetupMessage(): string {
   return 'Local Assistant is not ready. Start the local services, then retry.';
 }
 
-function buildProjectIndexedScreenAnalysisResponse(
-  command: CommandInput,
-  ocrResult: ScreenOcrResponse,
-  localAgentAnalysis: ScreenAnalysisResponse,
-  diagnosis: ScreenProjectIndexDiagnosis,
-): ScreenAnalysisResponse {
-  const auxiliaryText = getKoreanAnalysisText(localAgentAnalysis.detail ?? '') || getKoreanAnalysisText(localAgentAnalysis.summary);
-  const summary = buildScreenProjectIndexSummary(diagnosis);
-  const detail = buildScreenProjectIndexDetail(diagnosis, auxiliaryText);
-  return {
-    ...localAgentAnalysis,
-    requestId: command.id,
-    title: '화면 오류 프로젝트 흐름 진단',
-    summary,
-    detail,
-    preview: summarizePreview(summary, detail),
-    actionItems: mergeActionItems(buildScreenProjectIndexActionItems(diagnosis), localAgentAnalysis.actionItems),
-    textUsedLength: ocrResult.textLength,
-  };
-}
-
-function mergeRelatedProjectFiles(
-  primary: RelatedProjectFileCandidate[],
-  secondary: RelatedProjectFileCandidate[],
-): RelatedProjectFileCandidate[] {
-  const merged = new Map<string, RelatedProjectFileCandidate>();
-  for (const file of [...primary, ...secondary]) {
-    const existing = merged.get(file.relativePath);
-    if (!existing || file.score > existing.score) {
-      merged.set(file.relativePath, file);
-    }
-  }
-  return Array.from(merged.values())
-    .sort((left, right) => right.score - left.score || left.relativePath.localeCompare(right.relativePath))
-    .slice(0, 16);
-}
-
 function buildFailureNextStep(message: string): string {
   if (message.toLowerCase().includes('local')) {
     return 'Start Local Agent and Ollama, then retry';
   }
 
   return 'Check permission or command context';
-}
-
-
-function buildProjectDeepIndexContext(
-  scanResult: ProjectScanResult,
-  deepIndex: ProjectDeepIndexResult,
-  candidates: RelatedProjectFileCandidate[],
-): string {
-  const lines = [
-    'analysisMode=localProjectDeepIndex',
-    'sourcePolicy=localOnly',
-    `rootName=${scanResult.rootName}`,
-    `manifestTargetFiles=${scanResult.summary.targetFileCount}`,
-    `manifestExcludedFiles=${scanResult.summary.excludedFileCount}`,
-    `indexedFiles=${deepIndex.indexedFileCount}`,
-    `indexableFiles=${deepIndex.indexableFileCount}`,
-    `skippedIndexableFiles=${deepIndex.skippedFileCount}`,
-    '[modules]',
-    ...deepIndex.modules.slice(0, 12).map((module) => `${module.name}: files=${module.fileCount}, indexed=${module.indexedFileCount}`),
-    '[candidateRelativePaths]',
-    ...candidates.slice(0, 16).map((file) => `${file.relativePath} (${file.matchReasons.join('|')})`),
-  ];
-
-  return limitLines(lines.join('\n'), 3900);
-}
-
-function buildProjectDeepIndexText(deepIndex: ProjectDeepIndexResult): string {
-  const sections = [
-    '[Project Deep Index]',
-    buildProjectDeepIndexDetail(deepIndex),
-    '',
-    '[Indexed Source Excerpts]',
-    ...deepIndex.files.map((file) => formatIndexedFileForAnalysis(file)),
-  ];
-
-  return limitLines(sections.join('\n\n'), 11500);
-}
-
-function formatIndexedFileForAnalysis(file: ProjectDeepIndexFile): string {
-  return [
-    `--- FILE ${file.relativePath}`,
-    `role=${file.role} language=${file.language || 'unknown'} extension=${file.extension || 'none'} size=${file.sizeBytes} truncated=${file.truncated}`,
-    file.imports.length > 0 ? `[imports]\n${file.imports.join('\n')}` : '',
-    file.endpoints.length > 0 ? `[endpoints]\n${file.endpoints.join('\n')}` : '',
-    file.symbols.length > 0 ? `[symbols]\n${file.symbols.join('\n')}` : '',
-    '[contentExcerpt]',
-    file.contentExcerpt,
-  ].filter(Boolean).join('\n');
-}
-
-function buildProjectDeepIndexSummary(deepIndex: ProjectDeepIndexResult): string {
-  const moduleRoles = buildModuleRoleSummaries(deepIndex).slice(0, 4).map((item) => `${item.name}(${item.role})`).join(', ');
-  const flowSummary = buildRuntimeFlowSummary(deepIndex);
-  return `${deepIndex.rootName} 프로젝트는 로컬에서 안전하게 읽은 소스 ${deepIndex.indexedFileCount}개를 기준으로 흐름 인덱스를 생성했습니다. 주요 경계는 ${moduleRoles || '등록된 모듈'}이며, ${flowSummary}`;
-}
-
-function buildProjectDeepIndexDetail(
-  deepIndex: ProjectDeepIndexResult,
-  localAgentAnalysis?: ScreenAnalysisResponse,
-): string {
-  const roleCounts = countBy(deepIndex.files, (file) => file.role);
-  const moduleRoles = buildModuleRoleSummaries(deepIndex);
-  const runtimeFiles = filesByRole(deepIndex, ['runtime-boundary', 'entrypoint']).slice(0, 16);
-  const boundaryFiles = filesByRole(deepIndex, ['ui-boundary', 'api-boundary', 'service', 'repository']).slice(0, 32);
-  const endpoints = collectIndexedEndpoints(deepIndex).slice(0, 18);
-  const symbols = collectIndexedSymbols(deepIndex).slice(0, 20);
-  const koreanLocalAgentDetail = getKoreanAnalysisText(localAgentAnalysis?.detail ?? '')
-    || getKoreanAnalysisText(localAgentAnalysis?.summary ?? '');
-
-  const lines = [
-    '[프로젝트 전체 흐름 판단]',
-    `- 분석 방식: 로컬 safe source 인덱스 기반`,
-    `- 인덱싱 파일: ${deepIndex.indexedFileCount}/${deepIndex.indexableFileCount}`,
-    `- 제외/스킵 파일: ${deepIndex.skippedFileCount}`,
-    `- 읽은 용량: ${formatByteCount(deepIndex.totalReadBytes)} / ${formatByteCount(deepIndex.maxTotalBytes)}`,
-    `- 런타임 흐름: ${buildRuntimeFlowSummary(deepIndex)}`,
-    '',
-    '[모듈별 역할 추정]',
-    ...moduleRoles.slice(0, 12).map((module) => `- ${module.name}: ${module.role} / indexed ${module.indexedFileCount}/${module.fileCount}`),
-    '',
-    '[런타임 경계와 실행 진입점]',
-    ...formatRelativePathList(runtimeFiles, 18),
-    '',
-    '[UI / API / Service / Repository 연결 후보]',
-    ...formatIndexedFileList(boundaryFiles, 32),
-    '',
-    '[감지된 endpoint 후보]',
-    ...(endpoints.length > 0 ? endpoints.map((item) => `- ${item}`) : ['- manifest/source excerpt 범위에서 endpoint 후보를 찾지 못했습니다.']),
-    '',
-    '[감지된 symbol 후보]',
-    ...(symbols.length > 0 ? symbols.map((item) => `- ${item}`) : ['- manifest/source excerpt 범위에서 symbol 후보를 찾지 못했습니다.']),
-    '',
-    '[역할 분포]',
-    ...Array.from(roleCounts.entries()).sort((a, b) => b[1] - a[1]).map(([role, count]) => `- ${formatProjectFileRole(role)}: ${count}`),
-    '',
-    '[에러 화면 진단 시 사용할 흐름]',
-    '- 화면 OCR에서 endpoint, 파일명, class/function/component 이름, status code를 추출합니다.',
-    '- 추출된 신호를 Project Deep Index의 endpoint/symbol/relative path와 매칭합니다.',
-    '- 매칭된 UI/API/service/repository 후보 파일을 우선 확인합니다.',
-    '- 필요하면 관련 파일만 다시 로컬에서 읽고 Local Agent + Ollama로 원인 후보를 좁힙니다.',
-    '',
-    '[현재 한계]',
-    '- 전체 파일을 무제한으로 LLM에 넣지 않고, 로컬 인덱스와 excerpt budget 안에서 분석합니다.',
-    '- 동적 라우팅, 런타임 DI, DB schema 연결은 다음 단계에서 별도 인덱서가 필요합니다.',
-    '',
-    '[보안 경계]',
-    '- 파일 원문은 이 PC에서만 읽고 redaction 후 Local Agent로 전달합니다.',
-    '- NAS/Backend/AI Server로 파일 원문을 보내지 않습니다.',
-    '- 실제 OS absolute path와 rootPathAlias는 UI/LLM context에 노출하지 않습니다.',
-  ];
-
-  if (koreanLocalAgentDetail) {
-    lines.push('', '[Local Agent 보조 판단]', koreanLocalAgentDetail);
-  }
-
-  return lines.join('\n');
-}
-
-function buildProjectDeepIndexActionItems(deepIndex: ProjectDeepIndexResult): string[] {
-  const items = [
-    '에러 화면 진단 시 화면 OCR 결과를 Project Deep Index와 함께 매칭하세요.',
-    'UI/API/service/repository 후보 파일을 같은 흐름으로 확인하세요.',
-  ];
-
-  if (deepIndex.skippedFileCount > 0) {
-    items.push('스킵된 파일은 size/budget/보안 정책 때문에 제외되었는지 확인하세요.');
-  }
-
-  return items;
-}
-
-function buildModuleRoleSummaries(deepIndex: ProjectDeepIndexResult): Array<{ name: string; role: string; fileCount: number; indexedFileCount: number }> {
-  return deepIndex.modules.map((module) => ({
-    name: module.name,
-    role: inferModuleRole(module.name, deepIndex.files.filter((file) => file.relativePath.startsWith(`${module.name}/`))),
-    fileCount: module.fileCount,
-    indexedFileCount: module.indexedFileCount,
-  }));
-}
-
-function inferModuleRole(moduleName: string, files: ProjectDeepIndexFile[]): string {
-  const normalized = moduleName.toLowerCase();
-  const roleSet = new Set(files.map((file) => file.role));
-
-  if (normalized.includes('desktop') || roleSet.has('ui-boundary')) return 'Desktop/UI runtime';
-  if (normalized.includes('local-agent')) return 'Local Agent/OCR·LLM runtime';
-  if (normalized.includes('backend')) return 'Backend API/metadata service';
-  if (normalized.includes('ai-server')) return 'Server-side AI boundary';
-  if (normalized.includes('infra')) return 'Infrastructure/deployment boundary';
-  if (normalized.includes('docs')) return 'Documentation';
-  if (roleSet.has('api-boundary')) return 'API boundary';
-  if (roleSet.has('service')) return 'Service layer';
-  if (roleSet.has('repository')) return 'Persistence layer';
-  return 'Source module';
-}
-
-function buildRuntimeFlowSummary(deepIndex: ProjectDeepIndexResult): string {
-  const moduleNames = new Set(deepIndex.modules.map((module) => module.name.toLowerCase()));
-  const hasDesktop = Array.from(moduleNames).some((name) => name.includes('desktop'));
-  const hasLocalAgent = Array.from(moduleNames).some((name) => name.includes('local-agent'));
-  const hasBackend = Array.from(moduleNames).some((name) => name.includes('backend'));
-  const hasAiServer = Array.from(moduleNames).some((name) => name.includes('ai-server'));
-
-  const flow = [];
-  if (hasDesktop) flow.push('Desktop UI/Tauri');
-  if (hasLocalAgent) flow.push('Local Agent');
-  if (hasBackend) flow.push('Backend metadata/API');
-  if (hasAiServer) flow.push('AI Server boundary');
-
-  if (flow.length === 0) {
-    return '모듈 경계를 추가로 확인해야 합니다.';
-  }
-
-  return `${flow.join(' → ')} 순서의 경계를 우선 확인하는 구조입니다.`;
-}
-
-function filesByRole(deepIndex: ProjectDeepIndexResult, roles: string[]): ProjectDeepIndexFile[] {
-  const roleSet = new Set(roles);
-  return deepIndex.files.filter((file) => roleSet.has(file.role));
-}
-
-function formatRelativePathList(files: ProjectDeepIndexFile[], maxItems: number): string[] {
-  const items = files.slice(0, maxItems).map((file) => `- ${file.relativePath}`);
-  return items.length > 0 ? items : ['- 후보 없음'];
-}
-
-function formatIndexedFileList(files: ProjectDeepIndexFile[], maxItems: number): string[] {
-  const items = files.slice(0, maxItems).map((file) => `- ${file.relativePath} (${formatProjectFileRole(file.role)})`);
-  return items.length > 0 ? items : ['- 후보 없음'];
-}
-
-function collectIndexedEndpoints(deepIndex: ProjectDeepIndexResult): string[] {
-  return deepIndex.files.flatMap((file) => file.endpoints.map((endpoint) => `${file.relativePath}: ${endpoint}`));
-}
-
-function collectIndexedSymbols(deepIndex: ProjectDeepIndexResult): string[] {
-  return deepIndex.files.flatMap((file) => file.symbols.slice(0, 4).map((symbol) => `${file.relativePath}: ${symbol}`));
-}
-
-function formatProjectFileRole(role: string): string {
-  switch (role) {
-    case 'runtime-boundary': return '런타임 경계';
-    case 'entrypoint': return '실행 진입점';
-    case 'api-boundary': return 'API 경계';
-    case 'service': return '서비스 계층';
-    case 'repository': return '저장소 계층';
-    case 'ui-boundary': return 'UI 경계';
-    case 'config': return '설정';
-    default: return role;
-  }
-}
-
-function formatByteCount(value: number): string {
-  if (value < 1024) return `${value}B`;
-  if (value < 1024 * 1024) return `${Math.round(value / 1024)}KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)}MB`;
-}
-
-function getKoreanAnalysisText(value: string): string {
-  const text = normalizeAnalysisText(value, '').trim();
-  if (!text || !/[가-힣]/.test(text)) {
-    return '';
-  }
-  return text;
-}
-
-function buildProjectDeepIndexScreenContext(deepIndex: ProjectDeepIndexResult): string {
-  const lines = [
-    '[projectDeepIndexForScreenDiagnosis]',
-    `indexedFiles=${deepIndex.indexedFileCount}`,
-    '[modules]',
-    ...deepIndex.modules.slice(0, 8).map((module) => `${module.name}: indexed=${module.indexedFileCount}`),
-    '[flowFiles]',
-    ...deepIndex.files
-      .filter((file) => ['runtime-boundary', 'entrypoint', 'api-boundary', 'service', 'ui-boundary', 'repository'].includes(file.role))
-      .slice(0, 28)
-      .map((file) => `${file.relativePath} (${file.role})`),
-    '[endpoints]',
-    ...deepIndex.files.flatMap((file) => file.endpoints.map((endpoint) => `${file.relativePath}: ${endpoint}`)).slice(0, 18),
-  ];
-
-  return lines.join('\n');
-}
-
-function normalizeAnalysisText(value: string, fallback: string): string {
-  const trimmed = value.trim();
-  if (!trimmed || looksLikeRawJson(trimmed)) {
-    return fallback;
-  }
-  return trimmed;
-}
-
-function looksLikeRawJson(value: string): boolean {
-  const trimmed = value.trim();
-  return (trimmed.startsWith('{') && trimmed.endsWith('}')) || trimmed.startsWith('```json');
-}
-
-function countBy<T>(items: T[], getKey: (item: T) => string): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const item of items) {
-    const key = getKey(item);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  return counts;
-}
-
-function limitLines(value: string, maxChars: number): string {
-  if (value.length <= maxChars) {
-    return value;
-  }
-
-  const lines: string[] = [];
-  let size = 0;
-  for (const line of value.split(/\r?\n/)) {
-    if (size + line.length + 1 > maxChars) {
-      break;
-    }
-    lines.push(line);
-    size += line.length + 1;
-  }
-  lines.push('[TRUNCATED_BY_LOCAL_BUDGET]');
-  return lines.join('\n');
 }
 
 function buildProjectFileCandidates(files: ManifestFile[]): RelatedProjectFileCandidate[] {
@@ -1449,6 +1133,92 @@ function buildProjectArchitectureDetail(scanResult: ProjectScanResult, candidate
   return lines.filter(Boolean).join('\n');
 }
 
+
+function buildProjectDeepIndexSummary(scanResult: ProjectScanResult, readResult: ProjectFileReadResult | null): string {
+  const modules = topLevelDistribution(scanResult.files)
+    .slice(0, 5)
+    .map(([name]) => name)
+    .join(', ');
+  const readCount = readResult?.files.length ?? 0;
+  return `이 프로젝트는 ${modules || scanResult.rootName} 중심의 모듈형 로컬 AI 데스크톱 앱입니다. 안전한 핵심 파일 ${readCount}개를 로컬에서 읽어 Desktop UI, Local Agent, Backend/NAS 서버 경계를 기준으로 전체 실행 흐름을 분석했습니다.`;
+}
+
+function buildProjectDeepIndexDetail(
+  scanResult: ProjectScanResult,
+  candidates: RelatedProjectFileCandidate[],
+  readResult: ProjectFileReadResult | null,
+  localAgentHint: ScreenAnalysisResponse | null,
+): string {
+  const moduleLines = topLevelDistribution(scanResult.files)
+    .slice(0, 8)
+    .map(([name, count]) => `- ${name}: ${describeModuleRole(name)} · ${count} files`);
+  const entrypointLines = candidates
+    .filter((file) => file.matchReasons.includes('entrypoint'))
+    .slice(0, 8)
+    .map((file) => `- ${file.relativePath}`);
+  const boundaryLines = candidates
+    .filter((file) => file.matchReasons.some((reason) => reason === 'runtime-boundary' || reason === 'api-boundary' || reason === 'service'))
+    .slice(0, 12)
+    .map((file) => `- ${file.relativePath}`);
+  const readLines = (readResult?.files ?? [])
+    .slice(0, 18)
+    .map((file) => `- ${file.relativePath}${file.truncated ? ' · truncated' : ''}`);
+  const rejectedLines = (readResult?.rejected ?? [])
+    .slice(0, 8)
+    .map((file) => `- ${file.relativePath}: ${file.reason}`);
+  const localHintLines = localAgentHint && containsKorean(localAgentHint.summary + localAgentHint.detail)
+    ? ['', '[Local Agent 보조 판단]', localAgentHint.summary, localAgentHint.detail].filter(Boolean)
+    : [];
+
+  return [
+    '[프로젝트 전체 흐름]',
+    '- Desktop이 사용자의 명령, 프로젝트 선택, 화면 선택을 시작합니다.',
+    '- 실제 모델 처리와 민감 데이터 분석은 사용자 PC의 Local Agent/Ollama/STT/OCR 경계에서 수행합니다.',
+    '- Backend와 NAS 배포 FastAPI 서버는 저장, 동기화, 관리성 API를 담당하고 파일 원문/화면/음성 원문을 받지 않습니다.',
+    '',
+    '[모듈별 역할 추정]',
+    ...moduleLines,
+    '',
+    '[실행 진입점 후보]',
+    ...(entrypointLines.length > 0 ? entrypointLines : ['- manifest에서 명확한 진입점 후보를 찾지 못했습니다.']),
+    '',
+    '[흐름 추적 우선 파일]',
+    ...(boundaryLines.length > 0 ? boundaryLines : ['- API/service boundary 후보가 부족합니다.']),
+    '',
+    '[로컬에서 읽은 핵심 파일]',
+    ...(readLines.length > 0 ? readLines : ['- 읽은 파일이 없습니다. Local Agent/Ollama 설정을 확인하세요.']),
+    '',
+    '[차단된 파일]',
+    ...(rejectedLines.length > 0 ? rejectedLines : ['- 정책상 차단된 후보 파일은 없습니다.']),
+    '',
+    '[에러 화면 진단 시 흐름]',
+    '- OCR에서 API path, 파일명, status code, port, component/class/function 후보를 추출합니다.',
+    '- Project Index의 endpoint, symbol, import, relative path와 매칭합니다.',
+    '- Desktop UI → Local Agent/Tauri command → Backend/NAS API → 설정 파일 순서로 원인 후보를 좁힙니다.',
+    '',
+    '[보안 경계]',
+    '- 화면 이미지, OCR 원문, 음성 원문, 프로젝트 파일 원문은 NAS/Backend/FastAPI 서버로 보내지 않습니다.',
+    '- 파일 원문은 로컬에서 redaction 후 Local Agent로만 전달합니다.',
+    '- 실제 OS absolute path와 rootPathAlias는 사용자 화면과 Local LLM context에 노출하지 않습니다.',
+    ...localHintLines,
+  ].join('\n');
+}
+
+function describeModuleRole(moduleName: string): string {
+  const normalized = moduleName.toLowerCase();
+  if (normalized.includes('desktop')) return '사용자 UI와 Tauri 로컬 권한 경계';
+  if (normalized.includes('local-agent')) return '로컬 모델/OCR/STT/LLM 처리';
+  if (normalized.includes('backend')) return 'NAS 배포 가능한 저장/동기화 서버';
+  if (normalized.includes('ai-server')) return 'NAS 배포 가능한 비민감 FastAPI 서버';
+  if (normalized.includes('infra')) return '배포/운영 설정';
+  if (normalized.includes('docs')) return '설계/운영 문서';
+  return '프로젝트 구성 모듈';
+}
+
+function containsKorean(value: string): boolean {
+  return /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(value);
+}
+
 function topLevelDistribution(files: ManifestFile[]): Array<[string, number]> {
   const counts = new Map<string, number>();
   for (const file of files.filter((item) => !item.excluded)) {
@@ -1481,199 +1251,6 @@ function buildApprovedFileAnalysisText(readResult: ProjectFileReadResult): strin
   return sections.join('\n\n').slice(0, 11000);
 }
 
-
-function buildApprovedFileAnalysisSummary(readResult: ProjectFileReadResult): string {
-  const fileNames = readResult.files.slice(0, 3).map((file) => file.relativePath).join(', ');
-  const suffix = readResult.files.length > 3 ? ` 외 ${readResult.files.length - 3}개` : '';
-  return `승인한 ${readResult.files.length}개 파일을 로컬에서 읽고 민감 라인 제거 후 분석했습니다. 확인 범위는 ${fileNames}${suffix}입니다.`;
-}
-
-function buildApprovedFileAnalysisDetail(
-  readResult: ProjectFileReadResult,
-  response: LocalLlmAnalyzeResponse,
-): string {
-  const localAgentSections = formatLocalAgentStructuredAnalysis(response);
-  const lines = [
-    '[분석 범위]',
-    `- 승인 파일: ${readResult.files.length}개`,
-    `- 차단 파일: ${readResult.rejected.length}개`,
-    `- 읽은 용량: ${formatByteCount(readResult.totalBytes)} / ${formatByteCount(readResult.maxTotalBytes)}`,
-    '',
-    '[승인된 상대경로]',
-    ...readResult.files.map((file) => `- ${file.relativePath}${file.truncated ? ' (일부만 읽음)' : ''}`),
-  ];
-
-  if (readResult.rejected.length > 0) {
-    lines.push(
-      '',
-      '[정책상 차단된 파일]',
-      ...readResult.rejected.map((file) => `- ${file.relativePath}: ${file.reason}`),
-    );
-  }
-
-  lines.push(
-    '',
-    '[Local Agent 분석]',
-    ...(localAgentSections.length > 0 ? localAgentSections : ['- 분석 결과가 충분하지 않습니다. 관련 파일을 더 포함해 다시 확인하세요.']),
-    '',
-    '[보안 경계]',
-    '- 파일은 이 PC에서만 읽었습니다.',
-    '- 민감 라인은 Local Agent 전달 전에 제거했습니다.',
-    '- NAS/Backend/AI Server로 파일 원문을 보내지 않았습니다.',
-  );
-
-  return lines.join('\n');
-}
-
-function buildApprovedFileAnalysisActionItems(readResult: ProjectFileReadResult): string[] {
-  const items = ['에러 화면의 endpoint, 컴포넌트, 클래스명과 승인 파일 분석 결과를 비교하세요.'];
-  if (readResult.rejected.length > 0) {
-    items.push('차단된 파일이 필요해 보이면 민감 파일 여부를 먼저 로컬에서 직접 확인하세요.');
-  }
-  return items;
-}
-
-function mergeActionItems(...groups: Array<string[] | null | undefined>): string[] {
-  const merged: string[] = [];
-  for (const group of groups) {
-    for (const item of group ?? []) {
-      const normalized = formatUserFacingAnalysisText(item).trim();
-      if (normalized && !merged.includes(normalized)) {
-        merged.push(normalized);
-      }
-    }
-  }
-  return merged.slice(0, 5);
-}
-
-function formatLocalAgentStructuredAnalysis(response: LocalLlmAnalyzeResponse): string[] {
-  const candidates = [response.summary, response.detail ?? ''];
-  const lines: string[] = [];
-
-  for (const value of candidates) {
-    const formatted = formatUserFacingAnalysisText(value).trim();
-    if (!formatted || lines.includes(formatted)) continue;
-    lines.push(...formatted.split(/\r?\n/).filter(Boolean));
-  }
-
-  return lines;
-}
-
-function formatUserFacingAnalysisText(value: string): string {
-  const normalized = stripMarkdownJsonFence(value).trim();
-  if (!normalized) return '';
-
-  const parsed = parseJsonObject(normalized);
-  if (parsed !== null) {
-    return formatJsonForUser(parsed);
-  }
-
-  return normalized;
-}
-
-function stripMarkdownJsonFence(value: string): string {
-  return value
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/```$/i, '')
-    .trim();
-}
-
-function parseJsonObject(value: string): unknown | null {
-  const trimmed = value.trim();
-  if (!(trimmed.startsWith('{') && trimmed.endsWith('}')) && !(trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(trimmed) as unknown;
-  } catch {
-    return null;
-  }
-}
-
-function formatJsonForUser(value: unknown, depth = 0): string {
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => formatJsonArrayItem(item, depth))
-      .filter(Boolean)
-      .join('\n');
-  }
-
-  if (isRecord(value)) {
-    const sections: string[] = [];
-    for (const [key, entry] of Object.entries(value)) {
-      if (entry === null || entry === undefined || entry === '') continue;
-      const label = formatAnalysisKeyLabel(key);
-      if (Array.isArray(entry)) {
-        const items = entry.map((item) => formatJsonArrayItem(item, depth + 1)).filter(Boolean);
-        if (items.length > 0) sections.push(`[${label}]`, ...items);
-        continue;
-      }
-      if (isRecord(entry)) {
-        const nested = formatJsonForUser(entry, depth + 1);
-        if (nested) sections.push(`[${label}]`, nested);
-        continue;
-      }
-      sections.push(`[${label}]`, `- ${String(entry)}`);
-    }
-    return sections.join('\n');
-  }
-
-  return String(value);
-}
-
-function formatJsonArrayItem(value: unknown, depth: number): string {
-  if (Array.isArray(value)) {
-    const nested = formatJsonForUser(value, depth + 1);
-    return nested ? `- ${nested.replace(/\n/g, '\n  ')}` : '';
-  }
-  if (isRecord(value)) {
-    const pairs = Object.entries(value)
-      .filter(([, entry]) => entry !== null && entry !== undefined && entry !== '')
-      .map(([key, entry]) => `${formatAnalysisKeyLabel(key)}: ${formatJsonScalar(entry)}`);
-    return pairs.length > 0 ? `- ${pairs.join(' / ')}` : '';
-  }
-  return `- ${String(value)}`;
-}
-
-function formatJsonScalar(value: unknown): string {
-  if (Array.isArray(value)) {
-    return value.map((item) => formatJsonScalar(item)).join(', ');
-  }
-  if (isRecord(value)) {
-    return Object.entries(value)
-      .map(([key, entry]) => `${formatAnalysisKeyLabel(key)} ${formatJsonScalar(entry)}`)
-      .join(', ');
-  }
-  return String(value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function formatAnalysisKeyLabel(key: string): string {
-  const normalized = key.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
-  switch (normalized) {
-    case 'summary': return '요약';
-    case 'detail': return '상세';
-    case 'action_items': return '다음 확인 액션';
-    case 'runtime_flow': return '실행 흐름';
-    case 'module_boundaries': return '모듈 경계';
-    case 'ui_api_service_links': return 'UI/API/서비스 연결';
-    case 'likely_risk_points': return '잠재 위험 지점';
-    case 'next_checks': return '다음 확인 항목';
-    case 'root_cause_candidates': return '원인 후보';
-    case 'related_files': return '관련 파일';
-    case 'evidence': return '근거';
-    default:
-      return key
-        .replace(/[_-]+/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-  }
-}
-
 function incrementCount(counts: Map<string, number>, key: string) {
   counts.set(key, (counts.get(key) ?? 0) + 1);
 }
@@ -1683,8 +1260,6 @@ function buildLocalAnalysisContext(
   captured: ScreenCaptureResult,
   ocrResult: ScreenOcrResponse,
   projectDiagnosis: ProjectAwareScreenDiagnosis | null = null,
-  projectIndex: ProjectDeepIndexResult | null = null,
-  projectIndexDiagnosis: ScreenProjectIndexDiagnosis | null = null,
 ): string {
   const userRequest = command.text.length > 240 ? `${command.text.slice(0, 237)}...` : command.text;
   const baseContext = [
@@ -1698,13 +1273,7 @@ function buildLocalAnalysisContext(
     baseContext.push(formatProjectDiagnosisContext(projectDiagnosis));
   }
 
-  if (projectIndexDiagnosis) {
-    baseContext.push(formatScreenProjectIndexContext(projectIndexDiagnosis));
-  } else if (projectIndex) {
-    baseContext.push(buildProjectDeepIndexScreenContext(projectIndex));
-  }
-
-  return limitLines(baseContext.join('\n'), 3900);
+  return baseContext.join('\n');
 }
 
 function mapLocalAgentAnalysisResponse(

@@ -1,0 +1,2 @@
+# Optional local STT runtime. Install only on user PCs that need push-to-talk transcription.
+faster-whisper==1.2.1

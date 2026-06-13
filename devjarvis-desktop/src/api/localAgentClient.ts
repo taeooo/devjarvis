@@ -2,10 +2,11 @@ import type {
   LocalAgentAppHealthResponse,
   LocalAgentHealthResponse,
   LocalLlmAnalyzeRequest,
+  LocalWakeHealthResponse,
+  LocalWakeSessionResponse,
   LocalLlmAnalyzeResponse,
   LocalOcrHealthResponse,
   LocalSttHealthResponse,
-  LocalSttTranscribeRequest,
   LocalSttTranscribeResponse,
   ScreenOcrRequest,
   ScreenOcrResponse,
@@ -79,15 +80,83 @@ export async function analyzeWithLocalAgent(input: LocalLlmAnalyzeRequest): Prom
   }, 30000);
 }
 
+
+export async function getLocalWakeHealth(): Promise<LocalWakeHealthResponse> {
+  return requestLocalAgentJson<LocalWakeHealthResponse>('/internal/local-wake/health', {
+    method: 'GET',
+  });
+}
+
+export async function startLocalWakeSession(): Promise<LocalWakeSessionResponse> {
+  return requestLocalAgentJson<LocalWakeSessionResponse>('/internal/local-wake/session/start', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export async function stopLocalWakeSession(): Promise<LocalWakeSessionResponse> {
+  return requestLocalAgentJson<LocalWakeSessionResponse>('/internal/local-wake/session/stop', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
 export async function getLocalSttHealth(): Promise<LocalSttHealthResponse> {
   return requestLocalAgentJson<LocalSttHealthResponse>('/internal/local-stt/health', {
     method: 'GET',
   });
 }
 
-export async function transcribeWithLocalAgent(input: LocalSttTranscribeRequest): Promise<LocalSttTranscribeResponse> {
-  return requestLocalAgentJson<LocalSttTranscribeResponse>('/internal/local-stt/transcribe', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  }, 30000);
+export async function transcribeWithLocalAgent(input: {
+  commandId?: string;
+  audio: Blob;
+  durationMillis?: number | null;
+  recordedAt?: string | null;
+}): Promise<LocalSttTranscribeResponse> {
+  const formData = new FormData();
+  formData.append('audio', input.audio, resolveAudioFileName(input.audio.type));
+
+  if (input.commandId) {
+    formData.append('commandId', input.commandId);
+  }
+
+  if (typeof input.durationMillis === 'number') {
+    formData.append('durationMillis', String(input.durationMillis));
+  }
+
+  if (input.recordedAt) {
+    formData.append('recordedAt', input.recordedAt);
+  }
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 30000);
+
+  try {
+    const response = await fetch(`${localAgentBaseUrl}/internal/local-stt/transcribe`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    });
+
+    const payload = (await response.json()) as ApiResponse<LocalSttTranscribeResponse>;
+    if (!response.ok || !payload.success || payload.data === null) {
+      throw new Error(payload.error?.message ?? 'Local voice transcription failed.');
+    }
+
+    return payload.data;
+  } catch (caught) {
+    if (caught instanceof DOMException && caught.name === 'AbortError') {
+      throw new Error('Local voice transcription timed out.');
+    }
+    throw caught;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function resolveAudioFileName(mimeType: string): string {
+  if (mimeType.includes('ogg')) return 'voice-command.ogg';
+  if (mimeType.includes('wav')) return 'voice-command.wav';
+  if (mimeType.includes('mpeg')) return 'voice-command.mp3';
+  return 'voice-command.webm';
 }

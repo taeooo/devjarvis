@@ -13,6 +13,9 @@ def test_local_stt_health_returns_minimal_readiness() -> None:
     assert data["available"] is False
     assert "provider" not in data
     assert "model" not in data
+    assert data["maxAudioBytes"] > 0
+    assert data["maxDurationMillis"] > 0
+    assert "audio/webm" in data["acceptedMimeTypes"]
 
 
 def test_local_stt_transcribe_placeholder_returns_no_text() -> None:
@@ -21,7 +24,8 @@ def test_local_stt_transcribe_placeholder_returns_no_text() -> None:
     response = client.post(
         "/internal/local-stt/transcribe",
         headers={"host": "127.0.0.1:17997"},
-        json={"commandId": "cmd-1", "audio": None},
+        files={"audio": ("voice-command.webm", b"fake-audio", "audio/webm")},
+        data={"commandId": "cmd-1", "durationMillis": "1200"},
     )
 
     assert response.status_code == 200
@@ -31,20 +35,13 @@ def test_local_stt_transcribe_placeholder_returns_no_text() -> None:
     assert data["text"] == ""
 
 
-def test_local_stt_transcribe_rejects_non_audio_data_url() -> None:
+def test_local_stt_transcribe_requires_audio_file() -> None:
     client = TestClient(app)
 
     response = client.post(
         "/internal/local-stt/transcribe",
         headers={"host": "127.0.0.1:17997"},
-        json={
-            "commandId": "cmd-1",
-            "audio": {
-                "dataUrl": "data:text/plain;base64,AAAA",
-                "mimeType": "audio/wav",
-                "byteSize": 4,
-            },
-        },
+        data={"commandId": "cmd-1"},
     )
 
     assert response.status_code in {400, 422}

@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 
 from app.core.responses import ApiResponse
-from app.schemas.local_stt import LocalSttHealthResponse, LocalSttTranscribeRequest, LocalSttTranscribeResponse
+from app.schemas.local_stt import LocalSttHealthResponse, LocalSttTranscribeResponse
 from app.services.local_stt_service import LocalSttService, get_local_stt_service
 
 router = APIRouter(prefix="/internal/local-stt", tags=["local-stt"])
@@ -16,7 +16,16 @@ async def local_stt_health(
 
 @router.post("/transcribe", response_model=ApiResponse[LocalSttTranscribeResponse])
 async def transcribe(
-    request: LocalSttTranscribeRequest,
+    audio: UploadFile = File(...),
+    commandId: str | None = Form(default=None),
+    durationMillis: int | None = Form(default=None),
+    recordedAt: str | None = Form(default=None),
     service: LocalSttService = Depends(get_local_stt_service),
 ) -> ApiResponse[LocalSttTranscribeResponse]:
-    return ApiResponse.ok(await service.transcribe(request))
+    _ = commandId, recordedAt
+    content = await audio.read()
+    return ApiResponse.ok(await service.transcribe(
+        audio_bytes=content,
+        mime_type=audio.content_type or "application/octet-stream",
+        duration_millis=durationMillis,
+    ))
