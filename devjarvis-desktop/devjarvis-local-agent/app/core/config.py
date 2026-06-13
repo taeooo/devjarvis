@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     stt_compute_type: str = Field(default="int8")
     stt_language: str = Field(default="ko")
     stt_max_audio_bytes: int = Field(default=12_000_000)
+    stt_initial_prompt: str = Field(default="헤이 자비스. 화면 번역 요청. 사 더하기 사. 4 더하기 4. 곱하기. 나누기. 빼기. 더하기.")
+
+    wake_provider: str = Field(default="placeholder")
+    wake_phrase_hint: str = Field(default="헤이 자비스")
+    wake_paused: bool = Field(default=False)
+    wake_max_session_millis: int = Field(default=12000)
 
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: [
@@ -75,6 +81,14 @@ class Settings(BaseSettings):
         normalized = value.strip().lower()
         if normalized not in {"placeholder", "faster_whisper"}:
             raise ValueError("stt_provider must be placeholder or faster_whisper")
+        return normalized
+
+    @field_validator("wake_provider")
+    @classmethod
+    def validate_wake_provider(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"placeholder", "local_stt"}:
+            raise ValueError("wake_provider must be placeholder or local_stt")
         return normalized
 
     @field_validator("ocr_provider")

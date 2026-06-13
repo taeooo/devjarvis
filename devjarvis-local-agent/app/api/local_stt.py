@@ -22,10 +22,14 @@ async def transcribe(
     recordedAt: str | None = Form(default=None),
     service: LocalSttService = Depends(get_local_stt_service),
 ) -> ApiResponse[LocalSttTranscribeResponse]:
-    _ = commandId, recordedAt
-    content = await audio.read()
-    return ApiResponse.ok(await service.transcribe(
-        audio_bytes=content,
-        mime_type=audio.content_type or "application/octet-stream",
-        duration_millis=durationMillis,
-    ))
+    audio_bytes = await audio.read()
+    return ApiResponse.ok(
+        await service.transcribe(
+            audio_bytes=audio_bytes,
+            mime_type=audio.content_type or "application/octet-stream",
+            filename=audio.filename or "voice.webm",
+            command_id=commandId,
+            duration_millis=durationMillis,
+            recorded_at=recordedAt,
+        )
+    )

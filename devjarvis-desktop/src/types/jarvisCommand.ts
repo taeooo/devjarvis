@@ -1,4 +1,4 @@
-export type VoiceState = 'unavailable' | 'wake_ready' | 'idle' | 'listening' | 'recording' | 'processing' | 'text_ready' | 'mic_paused' | 'error';
+export type VoiceState = 'unavailable' | 'idle' | 'recording' | 'processing' | 'text_ready' | 'speaking' | 'error';
 
 export type SystemStatus = 'Ready' | 'Setup needed' | 'Checking' | 'Processing';
 
@@ -192,23 +192,6 @@ export type LocalAgentHealthResponse = {
   warning: string | null;
 };
 
-export type LocalWakeHealthResponse = {
-  available: boolean;
-  listening: boolean;
-  paused: boolean;
-  warning: string | null;
-  phraseHint: string;
-  maxSessionMillis: number;
-};
-
-export type LocalWakeSessionResponse = {
-  status: 'started' | 'stopped' | 'paused' | 'unavailable';
-  listening: boolean;
-  paused: boolean;
-  warning: string | null;
-};
-
-
 export type LocalLlmAnalyzeRequest = {
   commandId?: string;
   intent: CommandIntent;
@@ -300,15 +283,24 @@ export type ScreenAnalysisResponse = {
 export type LocalSttHealthResponse = {
   available: boolean;
   warning: string | null;
-  maxAudioBytes: number;
-  maxDurationMillis: number;
-  acceptedMimeTypes: string[];
+};
+
+export type LocalSttAudioPayload = {
+  blob: Blob;
+  mimeType: 'audio/wav' | 'audio/webm' | 'audio/ogg' | 'audio/mpeg';
+  byteSize: number;
+  durationMillis?: number | null;
+  recordedAt?: string | null;
+};
+
+export type LocalSttTranscribeRequest = {
+  commandId?: string;
+  audio: LocalSttAudioPayload;
 };
 
 export type LocalSttTranscribeResponse = {
   status: 'completed' | 'failed' | 'unavailable';
   text: string;
   textReady: boolean;
-  durationMillis?: number | null;
   warnings: string[];
 };

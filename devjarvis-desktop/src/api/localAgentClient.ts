@@ -2,11 +2,10 @@ import type {
   LocalAgentAppHealthResponse,
   LocalAgentHealthResponse,
   LocalLlmAnalyzeRequest,
-  LocalWakeHealthResponse,
-  LocalWakeSessionResponse,
   LocalLlmAnalyzeResponse,
   LocalOcrHealthResponse,
   LocalSttHealthResponse,
+  LocalSttTranscribeRequest,
   LocalSttTranscribeResponse,
   ScreenOcrRequest,
   ScreenOcrResponse,
@@ -23,13 +22,15 @@ async function requestLocalAgentJson<T>(path: string, init?: RequestInit, timeou
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    const headers = new Headers(init?.headers ?? {});
+    if (init?.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+
     const response = await fetch(`${localAgentBaseUrl}${path}`, {
       ...init,
       signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(init?.headers ?? {}),
-      },
+      headers,
     });
 
     const payload = (await response.json()) as ApiResponse<T>;
@@ -80,83 +81,40 @@ export async function analyzeWithLocalAgent(input: LocalLlmAnalyzeRequest): Prom
   }, 30000);
 }
 
-
-export async function getLocalWakeHealth(): Promise<LocalWakeHealthResponse> {
-  return requestLocalAgentJson<LocalWakeHealthResponse>('/internal/local-wake/health', {
-    method: 'GET',
-  });
-}
-
-export async function startLocalWakeSession(): Promise<LocalWakeSessionResponse> {
-  return requestLocalAgentJson<LocalWakeSessionResponse>('/internal/local-wake/session/start', {
-    method: 'POST',
-    body: JSON.stringify({}),
-  });
-}
-
-export async function stopLocalWakeSession(): Promise<LocalWakeSessionResponse> {
-  return requestLocalAgentJson<LocalWakeSessionResponse>('/internal/local-wake/session/stop', {
-    method: 'POST',
-    body: JSON.stringify({}),
-  });
-}
-
 export async function getLocalSttHealth(): Promise<LocalSttHealthResponse> {
   return requestLocalAgentJson<LocalSttHealthResponse>('/internal/local-stt/health', {
     method: 'GET',
   });
 }
 
-export async function transcribeWithLocalAgent(input: {
-  commandId?: string;
-  audio: Blob;
-  durationMillis?: number | null;
-  recordedAt?: string | null;
-}): Promise<LocalSttTranscribeResponse> {
+export async function transcribeWithLocalAgent(input: LocalSttTranscribeRequest): Promise<LocalSttTranscribeResponse> {
   const formData = new FormData();
-  formData.append('audio', input.audio, resolveAudioFileName(input.audio.type));
-
   if (input.commandId) {
     formData.append('commandId', input.commandId);
   }
-
-  if (typeof input.durationMillis === 'number') {
-    formData.append('durationMillis', String(input.durationMillis));
+  if (typeof input.audio.durationMillis === 'number') {
+    formData.append('durationMillis', String(input.audio.durationMillis));
   }
-
-  if (input.recordedAt) {
-    formData.append('recordedAt', input.recordedAt);
+  if (input.audio.recordedAt) {
+    formData.append('recordedAt', input.audio.recordedAt);
   }
+  formData.append('audio', input.audio.blob, `devjarvis-voice.${resolveAudioExtension(input.audio.mimeType)}`);
 
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 30000);
-
-  try {
-    const response = await fetch(`${localAgentBaseUrl}/internal/local-stt/transcribe`, {
-      method: 'POST',
-      body: formData,
-      signal: controller.signal,
-    });
-
-    const payload = (await response.json()) as ApiResponse<LocalSttTranscribeResponse>;
-    if (!response.ok || !payload.success || payload.data === null) {
-      throw new Error(payload.error?.message ?? 'Local voice transcription failed.');
-    }
-
-    return payload.data;
-  } catch (caught) {
-    if (caught instanceof DOMException && caught.name === 'AbortError') {
-      throw new Error('Local voice transcription timed out.');
-    }
-    throw caught;
-  } finally {
-    window.clearTimeout(timeout);
-  }
+  return requestLocalAgentJson<LocalSttTranscribeResponse>('/internal/local-stt/transcribe', {
+    method: 'POST',
+    body: formData,
+  }, 30000);
 }
 
-function resolveAudioFileName(mimeType: string): string {
-  if (mimeType.includes('ogg')) return 'voice-command.ogg';
-  if (mimeType.includes('wav')) return 'voice-command.wav';
-  if (mimeType.includes('mpeg')) return 'voice-command.mp3';
-  return 'voice-command.webm';
+function resolveAudioExtension(mimeType: LocalSttTranscribeRequest['audio']['mimeType']): string {
+  switch (mimeType) {
+    case 'audio/wav':
+      return 'wav';
+    case 'audio/ogg':
+      return 'ogg';
+    case 'audio/mpeg':
+      return 'mp3';
+    case 'audio/webm':
+      return 'webm';
+  }
 }
