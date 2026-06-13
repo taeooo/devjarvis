@@ -40,7 +40,18 @@ class Settings(BaseSettings):
     ocr_slow_warning_millis: int = Field(default=5000)
 
     stt_provider: str = Field(default="placeholder")
+    stt_model: str = Field(default="small")
+    stt_device: str = Field(default="cpu")
+    stt_compute_type: str = Field(default="int8")
+    stt_language: str = Field(default="ko")
     stt_max_audio_bytes: int = Field(default=12_000_000)
+    stt_max_duration_millis: int = Field(default=45_000)
+
+    wake_provider: str = Field(default="placeholder")
+    wake_phrase_hint: str = Field(default="헤이 자비스")
+    wake_max_session_millis: int = Field(default=15_000)
+    wake_stt_session_millis: int = Field(default=10_000)
+    wake_paused: bool = Field(default=False)
 
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: [
@@ -69,8 +80,25 @@ class Settings(BaseSettings):
     @classmethod
     def validate_stt_provider(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized != "placeholder":
-            raise ValueError("stt_provider must be placeholder")
+        if normalized not in {"placeholder", "faster_whisper"}:
+            raise ValueError("stt_provider must be placeholder or faster_whisper")
+        return normalized
+
+    @field_validator("stt_device")
+    @classmethod
+    def validate_stt_device(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"cpu", "cuda", "auto"}:
+            raise ValueError("stt_device must be cpu, cuda, or auto")
+        return normalized
+
+
+    @field_validator("wake_provider")
+    @classmethod
+    def validate_wake_provider(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"placeholder", "openwakeword"}:
+            raise ValueError("wake_provider must be placeholder or openwakeword")
         return normalized
 
     @field_validator("ocr_provider")

@@ -1,4 +1,4 @@
-export type VoiceState = 'unavailable' | 'idle' | 'recording' | 'processing' | 'text_ready' | 'error';
+export type VoiceState = 'unavailable' | 'wake_ready' | 'idle' | 'listening' | 'recording' | 'processing' | 'text_ready' | 'mic_paused' | 'error';
 
 export type SystemStatus = 'Ready' | 'Setup needed' | 'Checking' | 'Processing';
 
@@ -79,10 +79,7 @@ export type CommandResultMetadata = {
   manifestTargetFileCount?: number;
   manifestExcludedFileCount?: number;
   projectContext?: 'selected' | 'not_selected';
-  projectFileReadMode?: 'candidate_only' | 'approved_selection' | 'deep_index';
-  projectIndexFileCount?: number;
-  projectIndexModuleCount?: number;
-  projectIndexReadBytes?: number;
+  projectFileReadMode?: 'candidate_only' | 'approved_selection';
   projectSelectedFiles?: string[];
   projectRejectedFiles?: string[];
   ocrProvider?: string;
@@ -195,6 +192,23 @@ export type LocalAgentHealthResponse = {
   warning: string | null;
 };
 
+export type LocalWakeHealthResponse = {
+  available: boolean;
+  listening: boolean;
+  paused: boolean;
+  warning: string | null;
+  phraseHint: string;
+  maxSessionMillis: number;
+};
+
+export type LocalWakeSessionResponse = {
+  status: 'started' | 'stopped' | 'paused' | 'unavailable';
+  listening: boolean;
+  paused: boolean;
+  warning: string | null;
+};
+
+
 export type LocalLlmAnalyzeRequest = {
   commandId?: string;
   intent: CommandIntent;
@@ -286,24 +300,15 @@ export type ScreenAnalysisResponse = {
 export type LocalSttHealthResponse = {
   available: boolean;
   warning: string | null;
-};
-
-export type LocalSttAudioPayload = {
-  dataUrl: string;
-  mimeType: 'audio/wav' | 'audio/webm' | 'audio/ogg' | 'audio/mpeg';
-  byteSize: number;
-  durationMillis?: number | null;
-  recordedAt?: string | null;
-};
-
-export type LocalSttTranscribeRequest = {
-  commandId?: string;
-  audio?: LocalSttAudioPayload | null;
+  maxAudioBytes: number;
+  maxDurationMillis: number;
+  acceptedMimeTypes: string[];
 };
 
 export type LocalSttTranscribeResponse = {
   status: 'completed' | 'failed' | 'unavailable';
   text: string;
   textReady: boolean;
+  durationMillis?: number | null;
   warnings: string[];
 };
