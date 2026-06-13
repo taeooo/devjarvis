@@ -1,0 +1,3 @@
+# Optional local TTS runtime.
+# Install a Piper executable separately and set DEVJARVIS_LOCAL_AGENT_TTS_PROVIDER=piper_cli.
+# The executable is intentionally not bundled here because model/runtime files are user-managed.

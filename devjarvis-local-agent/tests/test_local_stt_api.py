@@ -45,3 +45,12 @@ def test_local_stt_transcribe_rejects_non_audio_payload() -> None:
     data = response.json()["data"]
     assert data["status"] == "failed"
     assert "unsupported_audio_type" in data["warnings"]
+
+
+def test_stt_normalizes_common_wake_and_math_words() -> None:
+    from app.services.local_stt_service import normalize_common_stt_text
+
+    text = normalize_common_stt_text("하이 자비스 사 더하기 사")
+
+    assert "헤이 자비스" in text
+    assert "사 더하기 사" in text

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { AppShell } from './components/AppShell';
@@ -19,9 +19,9 @@ import {
   transcribeWithLocalAgent,
 } from './api/localAgentClient';
 import { notifyCommandResult } from './utils/nativeWindow';
-import { recordShortLocalAudio } from './utils/localAudioCapture';
-import { buildResultSpeech, speakDevJarvis, speakDevJarvisNow } from './utils/voiceFeedback';
-import { createClientId, createCommandInput, createCommandPlan } from './utils/commandRouter';
+import { getMicrophonePermissionSnapshot, recordShortLocalAudio, requestMicrophonePermission, type MicrophonePermissionSnapshot } from './utils/localAudioCapture';
+import { buildResultSpeech, getDevJarvisSpeechProfile, speakDevJarvis, speakDevJarvisNow, warmupDevJarvisVoices } from './utils/voiceFeedback';
+import { createClientId, createCommandInput, createCommandPlan, isWakePhraseText, stripWakePhrase, trySolveInlineMathCommand } from './utils/commandRouter';
 import {
   buildProjectAwareScreenDiagnosis,
   formatProjectDiagnosisContext,
@@ -64,11 +64,16 @@ type LocalAssistantReadiness = {
   appReady: boolean;
   ocrReady: boolean;
   llmReady: boolean;
+  sttReady: boolean;
   message: string | null;
+  voiceMessage: string | null;
   checkedAt: string;
 };
 
-const MAX_RESULT_HISTORY = 8;
+const MAX_RESULT_HISTORY = 12;
+const WAKE_LISTEN_CHUNK_MILLIS = 2600;
+const WAKE_LISTEN_RETRY_MILLIS = 800;
+const VOICE_COMMAND_RECORDING_MILLIS = 7600;
 
 const initialScreenTarget: ScreenTargetSnapshot = {
   kind: 'not_selected',
@@ -109,6 +114,10 @@ function App() {
   const [latestProjectScan, setLatestProjectScan] = useState<ProjectScanResult | null>(null);
   const [micAvailable, setMicAvailable] = useState<boolean | null>(null);
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
+  const [wakeStatusMessage, setWakeStatusMessage] = useState('음성 호출 확인 중');
+  const [micPermission, setMicPermission] = useState<MicrophonePermissionSnapshot | null>(null);
+  const [hasKoreanVoice, setHasKoreanVoice] = useState(true);
+  const [localTtsAvailable, setLocalTtsAvailable] = useState(false);
   const [pendingVoiceScreenCommand, setPendingVoiceScreenCommand] = useState<string | null>(null);
   const [screenContext, setScreenContext] = useState<ScreenContextSnapshot>(initialScreenContext);
   const [localAgentHealth, setLocalAgentHealth] = useState<LocalAgentHealthSnapshot>(initialLocalAgentHealth);
@@ -120,30 +129,57 @@ function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [commandPhaseLabel, setCommandPhaseLabel] = useState('Ready for text');
   const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const voiceStateRef = useRef<VoiceState>('idle');
+  const isProcessingCommandRef = useRef(false);
+  const pendingVoiceScreenCommandRef = useRef<string | null>(null);
+  const micAvailableRef = useRef<boolean | null>(null);
+  const localAgentStateRef = useRef<LocalAgentConnectionState>('checking');
+  const wakeLoopBusyRef = useRef(false);
+
+
+  useEffect(() => {
+    voiceStateRef.current = voiceState;
+  }, [voiceState]);
+
+  useEffect(() => {
+    isProcessingCommandRef.current = isProcessingCommand;
+  }, [isProcessingCommand]);
+
+  useEffect(() => {
+    pendingVoiceScreenCommandRef.current = pendingVoiceScreenCommand;
+  }, [pendingVoiceScreenCommand]);
+
+  useEffect(() => {
+    micAvailableRef.current = micAvailable;
+  }, [micAvailable]);
+
+  useEffect(() => {
+    localAgentStateRef.current = localAgentHealth.state;
+  }, [localAgentHealth.state]);
+
+  useEffect(() => {
+    warmupDevJarvisVoices();
+    void refreshVoiceOutputProfile();
+  }, []);
+
+  async function refreshVoiceOutputProfile(): Promise<void> {
+    const profile = await getDevJarvisSpeechProfile();
+    setHasKoreanVoice(profile.hasKoreanVoice);
+    setLocalTtsAvailable(profile.localTtsAvailable);
+  }
 
   useEffect(() => {
     let cancelled = false;
 
     async function detectMicrophone() {
-      if (!navigator.mediaDevices?.enumerateDevices) {
-        if (!cancelled) {
-          setMicAvailable(false);
-          setVoiceState('unavailable');
-        }
-        return;
-      }
-
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const hasMicrophone = devices.some((device) => device.kind === 'audioinput');
-        if (!cancelled) {
-          setMicAvailable(hasMicrophone);
-          setVoiceState((current) => (hasMicrophone ? current : 'unavailable'));
-        }
-      } catch {
-        if (!cancelled) {
-          setMicAvailable(false);
-          setVoiceState('unavailable');
+      const snapshot = await getMicrophonePermissionSnapshot();
+      if (!cancelled) {
+        setMicPermission(snapshot);
+        const hasMicrophone = snapshot.hasAudioInput !== false && snapshot.state !== 'unsupported';
+        setMicAvailable(hasMicrophone);
+        setVoiceState((current) => (hasMicrophone ? current : 'unavailable'));
+        if (snapshot.state === 'denied' || snapshot.state === 'unsupported' || snapshot.hasAudioInput === false) {
+          setWakeStatusMessage(snapshot.message);
         }
       }
     }
@@ -217,12 +253,6 @@ function App() {
             : 'idle',
     },
     {
-      key: 'project',
-      label: 'Project',
-      value: selectedProject ? 'Selected' : 'Not selected',
-      tone: selectedProject ? 'ready' : 'idle',
-    },
-    {
       key: 'localAgent',
       label: 'Assistant',
       value: formatLocalAssistantContextValue(localAgentHealth.state),
@@ -242,13 +272,7 @@ function App() {
           ? 'warning'
           : 'idle',
     },
-    {
-      key: 'rag',
-      label: 'RAG',
-      value: selectedProject ? 'Project' : 'None',
-      tone: selectedProject ? 'ready' : 'idle',
-    },
-  ]), [screenContext, selectedProject, localAgentHealth.state, isProcessingCommand, lastCommand, voiceState]);
+  ]), [screenContext, localAgentHealth.state, isProcessingCommand, lastCommand, voiceState]);
 
   async function refreshLocalAssistantReadiness(): Promise<LocalAssistantReadiness> {
     setLocalAgentHealth((current) => ({
@@ -269,6 +293,14 @@ function App() {
       checkedAt: readiness.checkedAt,
       errorMessage: readiness.ready ? null : readiness.message,
     });
+
+    if (!readiness.sttReady) {
+      setWakeStatusMessage(readiness.voiceMessage ?? '음성 호출 준비 필요');
+    } else if (micPermission?.state === 'denied') {
+      setWakeStatusMessage(micPermission.message);
+    } else if (voiceStateRef.current === 'idle') {
+      setWakeStatusMessage('헤이 자비스 대기');
+    }
   }
 
   async function ensureLocalAssistantReady(): Promise<void> {
@@ -309,6 +341,25 @@ function App() {
     }
   }
 
+  async function handleCheckMicrophone() {
+    setSystemMessage(null);
+    setErrorMessage(null);
+    try {
+      const snapshot = await requestMicrophonePermission();
+      setMicPermission(snapshot);
+      setMicAvailable(snapshot.hasAudioInput !== false && snapshot.state !== 'unsupported');
+      setWakeStatusMessage(snapshot.message);
+      setSystemMessage(snapshot.message);
+      if (snapshot.state === 'granted') {
+        speakDevJarvisNow('마이크 권한이 확인되었습니다.');
+      }
+    } catch (caught) {
+      const message = toErrorMessage(caught);
+      setErrorMessage(message);
+      setWakeStatusMessage(message);
+    }
+  }
+
   async function handleManualVoiceInput() {
     setSystemMessage(null);
     setErrorMessage(null);
@@ -322,34 +373,10 @@ function App() {
     }
 
     try {
-      await ensureLocalAssistantReady();
-      const health = await getLocalSttHealth();
-      if (!health.available) {
-        setVoiceState('idle');
-        const message = health.warning ?? '로컬 음성 인식 설정이 필요합니다.';
-        setSystemMessage(message);
-        speakDevJarvisNow('로컬 음성 인식 설정이 필요합니다.');
-        return;
-      }
-
+      await ensureVoiceInputReady();
       setVoiceState('speaking');
       await speakDevJarvis('네, 말씀하세요.');
-
-      setVoiceState('recording');
-      const audio = await recordShortLocalAudio();
-
-      setVoiceState('processing');
-      const response = await transcribeWithLocalAgent({ commandId: createClientId(), audio });
-      if (response.textReady && response.text.trim().length > 0) {
-        setVoiceState('text_ready');
-        await handleTextCommandSubmit(response.text, 'voice');
-        return;
-      }
-
-      setVoiceState('idle');
-      const message = response.warnings[0] ?? '음성을 인식하지 못했습니다. 다시 말씀해주세요.';
-      setSystemMessage(message);
-      speakDevJarvisNow('음성을 인식하지 못했습니다. 다시 말씀해주세요.');
+      await captureAndSubmitVoiceCommand('manual');
     } catch (caught) {
       setVoiceState('error');
       const message = toErrorMessage(caught);
@@ -357,6 +384,128 @@ function App() {
       speakDevJarvisNow('음성 명령을 처리하지 못했습니다.');
     }
   }
+
+  async function ensureVoiceInputReady(): Promise<void> {
+    const permission = await requestMicrophonePermission();
+    setMicPermission(permission);
+    setMicAvailable(permission.hasAudioInput !== false && permission.state !== 'unsupported');
+    if (permission.state === 'denied' || permission.state === 'unsupported' || permission.hasAudioInput === false) {
+      setVoiceState(permission.hasAudioInput === false ? 'unavailable' : 'error');
+      setWakeStatusMessage(permission.message);
+      throw new Error(permission.message);
+    }
+
+    const health = await getLocalSttHealth();
+    if (!health.available) {
+      const message = health.warning ?? '로컬 음성 인식 설정이 필요합니다.';
+      setVoiceState('idle');
+      setWakeStatusMessage(message);
+      setSystemMessage(message);
+      speakDevJarvisNow('로컬 음성 인식 설정이 필요합니다.');
+      throw new Error(message);
+    }
+  }
+
+  async function captureAndSubmitVoiceCommand(mode: 'manual' | 'wake'): Promise<void> {
+    setVoiceState('recording');
+    const audio = await recordShortLocalAudio(VOICE_COMMAND_RECORDING_MILLIS);
+
+    setVoiceState('processing');
+    const response = await transcribeWithLocalAgent({ commandId: createClientId(), audio });
+    const recognizedText = stripWakePhrase(response.text ?? '');
+    if (response.textReady && recognizedText.length > 0) {
+      setVoiceState('text_ready');
+      setSystemMessage(`인식된 명령: ${recognizedText}`);
+      await handleTextCommandSubmit(recognizedText, 'voice');
+      return;
+    }
+
+    setVoiceState('idle');
+    const message = mode === 'wake'
+      ? '명령을 듣지 못했습니다. 다시 헤이 자비스라고 불러주세요.'
+      : response.warnings[0] ?? '음성을 인식하지 못했습니다. 다시 말씀해주세요.';
+    setSystemMessage(message);
+    speakDevJarvisNow(message);
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    let timerId: number | null = null;
+
+    async function scheduleNext(delay = WAKE_LISTEN_RETRY_MILLIS) {
+      if (cancelled) return;
+      timerId = window.setTimeout(() => {
+        void runWakeListenLoop();
+      }, delay);
+    }
+
+    async function runWakeListenLoop() {
+      if (cancelled) return;
+
+      if (!canRunWakeListenLoop()) {
+        await scheduleNext(1400);
+        return;
+      }
+
+      if (wakeLoopBusyRef.current) {
+        await scheduleNext(1200);
+        return;
+      }
+
+      wakeLoopBusyRef.current = true;
+      try {
+        const health = await getLocalSttHealth();
+        if (!health.available) {
+          setWakeStatusMessage('음성 호출 준비 필요');
+          await scheduleNext(5000);
+          return;
+        }
+
+        setWakeStatusMessage('헤이 자비스 대기');
+        const audio = await recordShortLocalAudio(WAKE_LISTEN_CHUNK_MILLIS);
+        if (!canRunWakeListenLoop()) {
+          await scheduleNext();
+          return;
+        }
+
+        const response = await transcribeWithLocalAgent({ commandId: createClientId(), audio });
+        const transcript = response.text ?? '';
+        if (response.textReady && isWakePhraseText(transcript)) {
+          setWakeStatusMessage('호출 감지됨');
+          setVoiceState('speaking');
+          await speakDevJarvis('네, 말씀하세요.');
+          if (!cancelled) {
+            await captureAndSubmitVoiceCommand('wake');
+          }
+          await scheduleNext(1800);
+          return;
+        }
+
+        await scheduleNext();
+      } catch {
+        setWakeStatusMessage('음성 호출 확인 중');
+        await scheduleNext(2500);
+      } finally {
+        wakeLoopBusyRef.current = false;
+      }
+    }
+
+    function canRunWakeListenLoop(): boolean {
+      return micAvailableRef.current === true
+        && voiceStateRef.current === 'idle'
+        && !isProcessingCommandRef.current
+        && pendingVoiceScreenCommandRef.current === null;
+    }
+
+    void scheduleNext(900);
+
+    return () => {
+      cancelled = true;
+      if (timerId !== null) {
+        window.clearTimeout(timerId);
+      }
+    };
+  }, []);
 
   async function handleSelectPendingVoiceScreen() {
     if (!pendingVoiceScreenCommand || isProcessingCommand) {
@@ -936,6 +1085,26 @@ function App() {
   }
 
   async function requestTextAnalysis(command: CommandInput): Promise<ScreenAnalysisResponse> {
+    if (command.intent === 'screen_math_solver') {
+      const solution = trySolveInlineMathCommand(command.text);
+      if (solution) {
+        return {
+          requestId: command.id,
+          provider: 'local-agent',
+          status: 'completed',
+          intent: command.intent,
+          title: '계산 결과',
+          summary: `${solution.expression}은 ${solution.answer}입니다.`,
+          detail: solution.detail,
+          preview: `${solution.expression} = ${solution.answer}`,
+          actionItems: ['계산식이 다르면 다시 짧게 말씀해주세요.'],
+          textUsedLength: command.text.length,
+          warnings: [],
+          analyzedAt: new Date().toISOString(),
+        };
+      }
+    }
+
     const response = await analyzeWithLocalAgent({
       commandId: command.id,
       intent: command.intent,
@@ -973,7 +1142,12 @@ function App() {
             voiceState={voiceState}
             disabled={isProcessingCommand}
             pendingScreenCommand={pendingVoiceScreenCommand !== null}
+            wakeStatusMessage={wakeStatusMessage}
+            microphonePermission={micPermission}
+            hasKoreanVoice={hasKoreanVoice}
+            localTtsAvailable={localTtsAvailable}
             onManualVoiceInput={handleManualVoiceInput}
+            onCheckMicrophone={handleCheckMicrophone}
             onSelectPendingScreen={handleSelectPendingVoiceScreen}
           />
           <ContextStatusPanel
@@ -995,10 +1169,11 @@ function App() {
 
 async function checkLocalAssistantReadiness(): Promise<LocalAssistantReadiness> {
   const checkedAt = new Date().toISOString();
-  const [appResult, ocrResult, llmResult] = await Promise.allSettled([
+  const [appResult, ocrResult, llmResult, sttResult] = await Promise.allSettled([
     getLocalAgentAppHealth(),
     getLocalOcrHealth(),
     getLocalAgentHealth(),
+    getLocalSttHealth(),
   ]);
 
   const appReady = appResult.status === 'fulfilled'
@@ -1006,6 +1181,7 @@ async function checkLocalAssistantReadiness(): Promise<LocalAssistantReadiness> 
     && appResult.value.loopbackOnly === true;
   const ocrReady = ocrResult.status === 'fulfilled' && ocrResult.value.available === true;
   const llmReady = llmResult.status === 'fulfilled' && llmResult.value.available === true;
+  const sttReady = sttResult.status === 'fulfilled' && sttResult.value.available === true;
   const ready = appReady && ocrReady && llmReady;
 
   return {
@@ -1013,7 +1189,9 @@ async function checkLocalAssistantReadiness(): Promise<LocalAssistantReadiness> 
     appReady,
     ocrReady,
     llmReady,
+    sttReady,
     message: ready ? null : buildLocalAssistantSetupMessage(appReady, ocrReady, llmReady),
+    voiceMessage: sttReady ? null : '로컬 음성 인식 설정이 필요합니다.',
     checkedAt,
   };
 }

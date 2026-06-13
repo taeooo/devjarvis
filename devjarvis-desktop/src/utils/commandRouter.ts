@@ -23,8 +23,14 @@ export type CommandExecutionPlan = {
   screenTargetPolicy: ScreenTargetPolicy;
 };
 
+export type InlineMathSolution = {
+  expression: string;
+  answer: string;
+  detail: string;
+};
+
 export function createCommandInput(text: string, source: CommandSource, hint: CommandRoutingHint = {}): CommandInput {
-  const normalized = text.trim();
+  const normalized = normalizeVoiceCommandText(text.trim());
   const intent = inferCommandIntent(normalized, hint);
 
   return {
@@ -154,6 +160,88 @@ export function createClientId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+export function isWakePhraseText(text: string): boolean {
+  const normalized = normalizeWakePhraseText(text);
+  return normalized.includes('헤이자비스')
+    || normalized.includes('heyjarvis')
+    || normalized.includes('하이자비스')
+    || normalized.includes('자비스야')
+    || normalized.includes('자비스');
+}
+
+export function stripWakePhrase(text: string): string {
+  return normalizeVoiceCommandText(text)
+    .replace(/헤이\s*자비스/gi, ' ')
+    .replace(/하이\s*자비스/gi, ' ')
+    .replace(/hey\s*jarvis/gi, ' ')
+    .replace(/자비스야/gi, ' ')
+    .replace(/자비스/gi, ' ')
+    .replace(/[,，.。!！?？]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function normalizeVoiceCommandText(text: string): string {
+  return text
+    .replace(/[，]/g, ',')
+    .replace(/[。]/g, '.')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function trySolveInlineMathCommand(text: string): InlineMathSolution | null {
+  const normalized = normalizeMathText(text);
+  const match = normalized.match(/(-?\d+(?:\.\d+)?)\s*(\+|-|\*|\/|%|몫)\s*(-?\d+(?:\.\d+)?)/);
+  if (!match) return null;
+
+  const left = Number(match[1]);
+  const operator = match[2];
+  const right = Number(match[3]);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return null;
+
+  let answer: number;
+  let operatorLabel: string;
+  switch (operator) {
+    case '+':
+      answer = left + right;
+      operatorLabel = '더하기';
+      break;
+    case '-':
+      answer = left - right;
+      operatorLabel = '빼기';
+      break;
+    case '*':
+      answer = left * right;
+      operatorLabel = '곱하기';
+      break;
+    case '/':
+      if (right === 0) return { expression: `${left} ÷ ${right}`, answer: '계산할 수 없습니다', detail: '0으로 나눌 수 없습니다.' };
+      answer = left / right;
+      operatorLabel = '나누기';
+      break;
+    case '%':
+      if (right === 0) return { expression: `${left} % ${right}`, answer: '계산할 수 없습니다', detail: '0으로 나눌 수 없습니다.' };
+      answer = left % right;
+      operatorLabel = '나머지';
+      break;
+    case '몫':
+      if (right === 0) return { expression: `${left} 몫 ${right}`, answer: '계산할 수 없습니다', detail: '0으로 나눌 수 없습니다.' };
+      answer = Math.trunc(left / right);
+      operatorLabel = '몫';
+      break;
+    default:
+      return null;
+  }
+
+  const formattedAnswer = formatNumber(answer);
+  const expression = `${formatNumber(left)} ${operatorLabel} ${formatNumber(right)}`;
+  return {
+    expression,
+    answer: formattedAnswer,
+    detail: `${expression}의 결과는 ${formattedAnswer}입니다.`,
+  };
+}
+
 function resolveCommandTitle(intent: CommandIntent): string {
   switch (intent) {
     case 'screen_translate':
@@ -233,7 +321,6 @@ function resolveNextStep(intent: CommandIntent, contextMode: ContextMode): strin
   return 'Review the response';
 }
 
-
 function isScreenIntent(intent: CommandIntent): boolean {
   return intent === 'screen_translate'
     || intent === 'screen_summary'
@@ -271,5 +358,43 @@ function getCommandToken(text: string): string | null {
 }
 
 function hasInlineArithmeticExpression(text: string): boolean {
-  return /\d+\s*[+\-−–*/×÷xX]\s*\d+/.test(text);
+  return /\d+\s*[+\-−–*/×÷xX]\s*\d+/.test(text) || trySolveInlineMathCommand(text) !== null;
+}
+
+function normalizeWakePhraseText(text: string): string {
+  return text.toLowerCase().replace(/[\s,，.。!！?？]/g, '');
+}
+
+function normalizeMathText(text: string): string {
+  let normalized = text.toLowerCase();
+  const replacements: Array<[RegExp, string]> = [
+    [/\bzero\b|영|공/g, '0'],
+    [/\bone\b|하나|일/g, '1'],
+    [/\btwo\b|둘|이/g, '2'],
+    [/\bthree\b|셋|삼/g, '3'],
+    [/\bfour\b|넷|사/g, '4'],
+    [/\bfive\b|다섯|오/g, '5'],
+    [/\bsix\b|여섯|육/g, '6'],
+    [/\bseven\b|일곱|칠/g, '7'],
+    [/\beight\b|여덟|팔/g, '8'],
+    [/\bnine\b|아홉|구/g, '9'],
+    [/\bten\b|열|십/g, '10'],
+    [/더하기|플러스|더해|\bplus\b/g, '+'],
+    [/빼기|마이너스|빼|\bminus\b/g, '-'],
+    [/곱하기|곱해|곱|\btimes\b|\bmultiply\b|×|x/g, '*'],
+    [/나누기|나눠|나누어|나눔|\bdivide\b|÷/g, '/'],
+    [/나머지|remainder/g, '%'],
+    [/몫|quotient/g, '몫'],
+  ];
+
+  for (const [pattern, replacement] of replacements) {
+    normalized = normalized.replace(pattern, replacement);
+  }
+
+  return normalized.replace(/[^0-9+\-*/%.몫\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function formatNumber(value: number): string {
+  if (Number.isInteger(value)) return String(value);
+  return String(Number(value.toFixed(6)));
 }
