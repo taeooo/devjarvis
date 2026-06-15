@@ -1,0 +1,13 @@
+# Optional local TTS runtime.
+# DevJarvis uses this only on the user's local PC through the loopback Local Agent.
+# Install this file only when high-quality local voice output is needed.
+#
+# MeloTTS-Korean is the recommended first provider:
+#   DEVJARVIS_LOCAL_AGENT_TTS_PROVIDER=melotts_kr
+#
+# Piper remains supported for users who already have a Piper voice model:
+#   DEVJARVIS_LOCAL_AGENT_TTS_PROVIDER=piper_cli
+
+# MeloTTS is currently distributed from the project repository. It downloads/loads
+# the Korean voice model locally when used by melo.api.TTS(language='KR').
+git+https://github.com/myshell-ai/MeloTTS.git@main

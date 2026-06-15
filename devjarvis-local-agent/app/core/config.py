@@ -45,6 +45,24 @@ class Settings(BaseSettings):
     stt_compute_type: str = Field(default="int8")
     stt_language: str = Field(default="ko")
     stt_max_audio_bytes: int = Field(default=12_000_000)
+    stt_initial_prompt: str = Field(default="헤이 자비스. 화면 번역 요청. 사 더하기 사. 4 더하기 4. 곱하기. 나누기. 빼기. 더하기.")
+
+
+    tts_provider: str = Field(default="placeholder")
+    tts_piper_executable: str = Field(default="piper")
+    tts_model_path: str = Field(default="")
+    tts_config_path: str = Field(default="")
+    tts_melotts_device: str = Field(default="cpu")
+    tts_melotts_speaker_id: str = Field(default="KR")
+    tts_melotts_speed: float = Field(default=0.92)
+    tts_leading_silence_millis: int = Field(default=220)
+    tts_max_chars: int = Field(default=320)
+    tts_timeout_seconds: float = Field(default=30.0)
+
+    wake_provider: str = Field(default="placeholder")
+    wake_phrase_hint: str = Field(default="헤이 자비스")
+    wake_paused: bool = Field(default=False)
+    wake_max_session_millis: int = Field(default=12000)
 
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: [
@@ -75,6 +93,23 @@ class Settings(BaseSettings):
         normalized = value.strip().lower()
         if normalized not in {"placeholder", "faster_whisper"}:
             raise ValueError("stt_provider must be placeholder or faster_whisper")
+        return normalized
+
+
+    @field_validator("tts_provider")
+    @classmethod
+    def validate_tts_provider(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"placeholder", "piper_cli", "melotts_kr"}:
+            raise ValueError("tts_provider must be placeholder, piper_cli, or melotts_kr")
+        return normalized
+
+    @field_validator("wake_provider")
+    @classmethod
+    def validate_wake_provider(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"placeholder", "local_stt"}:
+            raise ValueError("wake_provider must be placeholder or local_stt")
         return normalized
 
     @field_validator("ocr_provider")
