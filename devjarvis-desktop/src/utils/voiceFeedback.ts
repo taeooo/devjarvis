@@ -1,8 +1,13 @@
 const DEFAULT_LANG = 'ko-KR';
 const MAX_SPOKEN_CHARS = 180;
-const LOCAL_TTS_PLAYBACK_PREROLL_MS = 120;
+const LOCAL_TTS_PLAYBACK_PREROLL_MS = 180;
 const DEFAULT_LOCAL_AGENT_BASE_URL = 'http://127.0.0.1:17997';
+const ENABLE_BROWSER_TTS_FALLBACK = import.meta.env.VITE_DEVJARVIS_ALLOW_BROWSER_TTS_FALLBACK === 'true';
 const PREFERRED_KO_VOICE_HINTS = [
+  'injoon',
+  'jinho',
+  'woong',
+  'male',
   'heami',
   'sunhi',
   'yuna',
@@ -67,12 +72,14 @@ export async function getDevJarvisSpeechProfile(): Promise<DevJarvisSpeechProfil
 
 export async function speakDevJarvis(message: string): Promise<void> {
   const text = normalizeSpeechText(message);
-  if (!text) return;
+  if (!text || shouldSuppressSpeech(text)) return;
 
-  const localSpoken = await trySpeakWithLocalTts(text);
-  if (localSpoken) return;
+  const localResult = await trySpeakWithLocalTts(text);
+  if (localResult === 'spoken' || localResult === 'local_failed') return;
 
-  await speakWithBrowserSpeech(text);
+  if (ENABLE_BROWSER_TTS_FALLBACK) {
+    await speakWithBrowserSpeech(text);
+  }
 }
 
 export function speakDevJarvisNow(message: string): void {
@@ -82,19 +89,23 @@ export function speakDevJarvisNow(message: string): void {
 export function buildResultSpeech(summary: string): string {
   const normalized = normalizeSpeechText(summary);
   if (!normalized) {
-    return '완료했습니다.';
+    return '좋습니다. 결과를 준비했습니다.';
   }
 
   if (normalized.length <= MAX_SPOKEN_CHARS) {
     return normalized;
   }
 
-  return `${normalized.slice(0, MAX_SPOKEN_CHARS).trim()}… 자세한 내용은 결과 창에서 확인해주세요.`;
+  return `${normalized.slice(0, MAX_SPOKEN_CHARS).trim()}… 자세한 내용은 오른쪽 결과에서 확인해 주세요.`;
 }
 
-async function trySpeakWithLocalTts(text: string): Promise<boolean> {
+type LocalTtsSpeakResult = 'spoken' | 'not_configured' | 'local_failed';
+
+async function trySpeakWithLocalTts(text: string): Promise<LocalTtsSpeakResult> {
   const status = await getLocalTtsStatus();
-  if (!status.available) return false;
+  if (!status.available) {
+    return hasConfiguredLocalTts(status.warning) ? 'local_failed' : 'not_configured';
+  }
 
   try {
     stopCurrentAudio();
@@ -107,10 +118,16 @@ async function trySpeakWithLocalTts(text: string): Promise<boolean> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     });
-    if (!response.ok) return false;
+    if (!response.ok) {
+      invalidateLocalTtsStatus('local_tts_synthesis_failed');
+      return 'local_failed';
+    }
 
     const blob = await response.blob();
-    if (blob.size <= 0) return false;
+    if (blob.size <= 0) {
+      invalidateLocalTtsStatus('local_tts_empty_audio');
+      return 'local_failed';
+    }
 
     const url = URL.createObjectURL(blob);
     try {
@@ -118,9 +135,10 @@ async function trySpeakWithLocalTts(text: string): Promise<boolean> {
     } finally {
       URL.revokeObjectURL(url);
     }
-    return true;
+    return 'spoken';
   } catch {
-    return false;
+    invalidateLocalTtsStatus('local_tts_playback_failed');
+    return 'local_failed';
   }
 }
 
@@ -145,6 +163,26 @@ async function getLocalTtsStatus(): Promise<{ available: boolean; warning: strin
     localTtsStatus = next;
     return next;
   }
+}
+
+function invalidateLocalTtsStatus(warning: string): void {
+  localTtsStatus = { available: false, warning, checkedAt: Date.now() };
+}
+
+function hasConfiguredLocalTts(warning: string | null): boolean {
+  if (!warning) return false;
+  const normalized = warning.toLowerCase();
+  return (
+    normalized.includes('cosyvoice') ||
+    normalized.includes('melotts') ||
+    normalized.includes('piper') ||
+    normalized.includes('reference') ||
+    normalized.includes('model') ||
+    normalized.includes('runtime') ||
+    normalized.includes('local_tts_synthesis_failed') ||
+    normalized.includes('local_tts_empty_audio') ||
+    normalized.includes('local_tts_playback_failed')
+  );
 }
 
 function playAudioUrl(url: string): Promise<void> {
@@ -242,10 +280,30 @@ function normalizeSpeechText(value: string): string {
     .trim();
 }
 
+function shouldSuppressSpeech(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized === 'speech_not_detected' ||
+    normalized === 'speech not detected' ||
+    normalized.includes('speech_not_detected') ||
+    normalized.includes('speech not detected')
+  );
+}
+
 function stabilizeShortKoreanUtterance(value: string): string {
   const normalized = value.trim();
-  if (normalized === '네, 말씀하세요.') {
-    return '네. 말씀하세요.';
+  const lower = normalized.toLowerCase();
+  if (lower === 'speech_not_detected' || lower === 'speech not detected') {
+    return '';
+  }
+  if (normalized === '네, 말씀하세요.' || normalized === '네. 말씀하세요.') {
+    return '네. 듣고 있습니다.';
+  }
+  if (normalized.includes('화면을 선택')) {
+    return '좋습니다. 화면을 보여주세요.';
+  }
+  if (normalized === '완료했습니다.') {
+    return '좋습니다. 결과를 준비했습니다.';
   }
   if (normalized.startsWith('네, ')) {
     return normalized.replace('네, ', '네. ');

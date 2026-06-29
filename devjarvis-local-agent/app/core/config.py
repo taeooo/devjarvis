@@ -55,7 +55,13 @@ class Settings(BaseSettings):
     tts_melotts_device: str = Field(default="cpu")
     tts_melotts_speaker_id: str = Field(default="KR")
     tts_melotts_speed: float = Field(default=0.92)
-    tts_leading_silence_millis: int = Field(default=220)
+    tts_cosyvoice_repo_path: str = Field(default="")
+    tts_cosyvoice_model_dir: str = Field(default="")
+    tts_cosyvoice_prompt_audio_path: str = Field(default="")
+    tts_cosyvoice_prompt_text: str = Field(default="")
+    tts_cosyvoice_prompt_text_path: str = Field(default="")
+    tts_cosyvoice_text_frontend: bool = Field(default=True)
+    tts_leading_silence_millis: int = Field(default=260)
     tts_max_chars: int = Field(default=320)
     tts_timeout_seconds: float = Field(default=30.0)
 
@@ -100,8 +106,8 @@ class Settings(BaseSettings):
     @classmethod
     def validate_tts_provider(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in {"placeholder", "piper_cli", "melotts_kr"}:
-            raise ValueError("tts_provider must be placeholder, piper_cli, or melotts_kr")
+        if normalized not in {"placeholder", "piper_cli", "melotts_kr", "cosyvoice2_local"}:
+            raise ValueError("tts_provider must be placeholder, piper_cli, melotts_kr, or cosyvoice2_local")
         return normalized
 
     @field_validator("wake_provider")
