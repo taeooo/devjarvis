@@ -2,10 +2,10 @@ fastapi==0.124.0
 uvicorn[standard]==0.38.0
 pydantic==2.12.5
 pydantic-settings==2.12.0
-python-dotenv==1.2.1
+python-dotenv==1.2.2
 httpx==0.28.1
-pytest==9.0.2
-Pillow==12.0.0
+pytest==9.0.3
+Pillow==12.2.0
 numpy==2.3.5
 rapidocr-onnxruntime==1.4.4
-python-multipart==0.0.20
+python-multipart==0.0.31
