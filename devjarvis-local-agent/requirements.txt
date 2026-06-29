@@ -9,3 +9,5 @@ Pillow==12.0.0
 numpy==2.3.5
 rapidocr-onnxruntime==1.4.4
 python-multipart==0.0.20
+langchain>=1.0.0,<2.0.0
+langgraph>=1.0.0,<2.0.0
